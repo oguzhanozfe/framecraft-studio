@@ -116,6 +116,18 @@ To synchronize the face with recorded speech, use an isolated Python environment
 
 Place the synchronized takes in the motion recipe. A shot can use `layout` values `clean`, `corner`, `side`, `tag`, `metric` or `versus`. For two measured results, set `comparison` to their numeric values and include the units, test conditions and source in the text fields. Put a moving face camera or product insert in an `inset` with its own `file`, `start`, `x`, `y`, `width` and `height`. An optional `preview_seconds` renders a short audition using the same frame and audio checks. Store its recipe in a separate directory to retain the full edit's assessment.
 
+### Matched creative tests
+
+Use one approved 30-second motion recipe per product. The opening and closing are direct-to-camera takes. The middle shots retain the reviewed source intervals. Each hook is paired with two different spoken and captioned calls to action. Keep the audience, opening, music and product evidence fixed within each pair.
+
+An experiment catalog contains a `products` list. Each entry names a `slug`, `project`, integer `hooks`, source `base` recipe, `score`, local Whisper directory `asr`, `voice`, and a `middle_speech` mapping of narration keys to start times in seconds. Resolve these paths relative to the catalog. Inside each slug directory, `final-copy.json` contains `hooks`, `ctas`, and the middle narration strings. The `speech` folder holds mono 24 kHz PCM16 WAVs, matching `hook0-face.mp4` and `cta0-face.mp4` takes, and corresponding `*-sync.json` measurements bound to the speech and video hashes. Use zero-based indices for the input takes.
+
+To generate mouth motion from the recorded voice, set `presenter.opening` and `presenter.closing` for each product to objects with a source `file`, `start` and `seconds`. In the MuseTalk environment run `python -m framecraft.campaign_cast experiments.json WEIGHTS MUSETALK_CHECKOUT SYNCNET_DIR`. It tests the synthesized mouth motion, adjusts the narration onset when the measurement supports it and saves the selected take and its report.
+
+1. Run `python -m framecraft.campaign_experiments experiments.json` to render and audit the editions.
+2. In the lip-sync environment, install `python_speech_features` and supply the local YuNet detector and a directory containing `SyncNetModel.py` and `syncnet_v2.model`. Run `python -m framecraft.campaign_experiments experiments.json --verify-lips yunet.onnx SYNCNET_DIR` to check the final opening and closing against the timed voice. Each report records the measured offset, confidence and face visibility. [SyncNet source and weights](https://github.com/joonson/syncnet_python)
+3. Run `python -m framecraft.campaign_experiments experiments.json --export gallery` to package the MP4s, comparison page, CSV and manifest. Add `--ready-only` to review completed pairs during a run.
+
 ## Development
 
 ```sh

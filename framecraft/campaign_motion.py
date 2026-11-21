@@ -341,7 +341,7 @@ def render_soundtrack(recipe, folder, soundtrack, seconds):
             f"[0:a]{speech},pan=stereo|c0=c0|c1=c0,asplit=2[vo][key];"
             f"[1:a]loudnorm=I=-26:TP=-3:LRA=8,aresample=48000,apad,atrim=duration={seconds},afade=t=out:st={max(0, seconds - 1)}:d=1[bed];"
             "[bed][key]sidechaincompress=threshold=0.024:ratio=3:attack=12:release=260[under];"
-            "[vo][under]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.90:latency=1[a]"
+            "[vo][under]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.84:level=0:latency=1[a]"
         )
         audio = ["-filter_complex", mix, "-map", "[a]"]
     else:

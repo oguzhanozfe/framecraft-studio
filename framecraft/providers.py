@@ -316,7 +316,21 @@ def generate(
             progress(f"{name} · render {pid}")
             next_history = 0.0
             retried_read = False
-            while time.monotonic() < deadline:
+            while True:
+                if time.monotonic() >= deadline:
+                    queued = (
+                        client.get("/queue").raise_for_status().json()["queue_pending"]
+                    )
+                    if not any(row[1] == pid for row in queued):
+                        # Check history once more below, including results completed at the deadline.
+                        history = (
+                            client.get("/history/" + pid).raise_for_status().json()
+                        )
+                        if pid not in history:
+                            raise TimeoutError(
+                                "ComfyUI render exceeded one hour: " + pid
+                            )
+                    deadline = time.monotonic() + 3600
                 monitor.inspect(client, pid, progress)
                 if time.monotonic() < next_history:
                     continue
@@ -338,6 +352,7 @@ def generate(
                                 .raise_for_status()
                                 .json()["prompt_id"]
                             )
+                            deadline = time.monotonic() + 3600
                             progress(f"Retrying model weight read · {pid}")
                             continue
                         raise RuntimeError("ComfyUI: " + " ".join(errors)[:800])
@@ -354,6 +369,5 @@ def generate(
                             for chunk in result.iter_bytes():
                                 f.write(chunk)
                         return target
-            raise TimeoutError("ComfyUI render exceeded one hour: " + pid)
         finally:
             monitor.close()

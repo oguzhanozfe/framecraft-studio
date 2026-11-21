@@ -3,9 +3,10 @@
 import argparse
 import json
 import math
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
+
 import cv2
 import numpy as np
 import torch
@@ -18,7 +19,9 @@ class Dubber:
         sys.path.insert(0, str(source))
         from musetalk.models.unet import PositionalEncoding
 
-        self.device = device
+        stream_weights = device == "cuda-stream"
+        self.device = "cuda" if stream_weights else device
+        weight_device = "cpu" if stream_weights else self.device
         self.dtype = torch.float16 if device.startswith("cuda") else torch.float32
         self.yunet = cv2.FaceDetectorYN.create(
             str(weights / "yunet.onnx"), "", (320, 320), 0.67
@@ -34,25 +37,32 @@ class Dubber:
             mmap=True,
         )
         self.net.load_state_dict(state, assign=True)
-        self.net.to(device=self.device, dtype=self.dtype).eval()
+        self.net.to(device=weight_device, dtype=self.dtype).eval()
         self.vae = (
             AutoencoderKL.from_pretrained(
                 str(weights / "sd-vae"), torch_dtype=self.dtype
             )
-            .to(device)
+            .to(weight_device)
             .eval()
         )
         self.pe = (
-            PositionalEncoding(d_model=384).to(device=device, dtype=self.dtype).eval()
+            PositionalEncoding(d_model=384)
+            .to(device=self.device, dtype=self.dtype)
+            .eval()
         )
         self.whisper = (
             WhisperModel.from_pretrained(
                 str(weights / "whisper"), torch_dtype=self.dtype
             )
-            .to(device)
+            .to(weight_device)
             .eval()
         )
         self.encoder = WhisperFeatureExtractor.from_pretrained(str(weights / "whisper"))
+        if stream_weights:
+            from accelerate import cpu_offload
+
+            for module in (self.vae, self.net, self.whisper.encoder):
+                cpu_offload(module, torch.device(self.device), offload_buffers=True)
 
     def prompts(self, audio, frames, fps):
         feature = self.encoder(
@@ -102,7 +112,18 @@ class Dubber:
         )
 
     @torch.inference_mode()
-    def run(self, src, voice, out, start, at, length, batch=6):
+    def run(
+        self,
+        src,
+        voice,
+        out,
+        start,
+        at,
+        length,
+        batch=6,
+        voice_delay_ms=120,
+        speech_only=False,
+    ):
         cap = cv2.VideoCapture(str(src))
         fps = cap.get(cv2.CAP_PROP_FPS)
         count = math.ceil(length * fps - 1e-6)
@@ -146,7 +167,12 @@ class Dubber:
                 "-i",
                 str(voice),
                 "-af",
-                f"adelay=120,apad,atrim=start={at}:duration={length + 0.1}",
+                (
+                    f"adelay={voice_delay_ms},"
+                    if voice_delay_ms >= 0
+                    else f"atrim=start={-voice_delay_ms / 1000},asetpts=PTS-STARTPTS,"
+                )
+                + f"apad,atrim=start={at}:duration={length + 0.1}",
                 "-ar",
                 "16000",
                 "-ac",
@@ -156,7 +182,18 @@ class Dubber:
                 "pipe:1",
             ]
         )
-        features = self.prompts(np.frombuffer(raw, dtype="<f4").copy(), count, fps)
+        signal = np.frombuffer(raw, dtype="<f4").copy()
+        features = self.prompts(signal, count, fps)
+        envelope = np.ones(count, dtype=np.float32)
+        if speech_only:
+            loud = np.flatnonzero(np.abs(signal) > 0.012)
+            if len(loud) < 100:
+                raise ValueError("A talking take needs audible speech")
+            onset, end = (loud[[0, -1]] / 16000) * fps
+            positions = np.arange(count)
+            envelope = np.clip(
+                np.minimum(positions - onset + 3, end - positions + 3) / 2, 0, 1
+            )
         h, w = frames[0].shape[:2]
         proc = subprocess.Popen(
             [
@@ -193,6 +230,10 @@ class Dubber:
         deltas = []
         try:
             for offset in range(0, count, batch):
+                if not np.any(envelope[offset : offset + batch]):
+                    for original in frames[offset : offset + batch]:
+                        proc.stdin.write(original.tobytes())
+                    continue
                 crops = []
                 regions = []
                 for i in range(offset, min(count, offset + batch)):
@@ -258,6 +299,7 @@ class Dubber:
                     mask = cv2.GaussianBlur(mask, (0, 0), max(1, ww * 0.034))[
                         :, :, None
                     ]
+                    mask *= envelope[offset + k]
                     result = original.copy()
                     result[y:b, x:r] = np.rint(
                         patch * mask + surface * (1 - mask)
@@ -286,6 +328,8 @@ class Dubber:
             "face_detections": len(good),
             "audio_start": at,
             "source_start": start,
+            "voice_delay_ms": voice_delay_ms,
+            "speech_only": speech_only,
             "mouth_pixel_change_mean": round(float(np.mean(deltas)), 2),
         }
 
@@ -308,6 +352,9 @@ if __name__ == "__main__":
             clip.get("start", 0),
             clip["timeline"],
             clip["seconds"],
+            batch=spec.get("batch", 6),
+            voice_delay_ms=spec.get("voice_delay_ms", 120),
+            speech_only=spec.get("speech_only", False),
         )
         output.with_suffix(".json").write_text(
             json.dumps(report, indent=2), encoding="utf8"

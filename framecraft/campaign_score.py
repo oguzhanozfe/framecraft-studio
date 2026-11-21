@@ -4,12 +4,14 @@ import argparse
 import time
 import uuid
 from pathlib import Path
+
 import httpx
-from .providers import comfy
+
 from .core import save
+from .providers import comfy
 
 
-def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
+def compose(tags, target, *, seed=1975, seconds=32, bpm=104, front=False):
     ckpt = "ace_step_1.5_turbo_aio.safetensors"
     nodes = {}
 
@@ -63,13 +65,15 @@ def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
         format="flac",
     )
     with httpx.Client(base_url=comfy(), timeout=60) as client:
-        res = client.post("/prompt", json={"prompt": nodes, "client_id": token})
+        res = client.post(
+            "/prompt", json={"prompt": nodes, "client_id": token, "front": front}
+        )
         if res.is_error:
             raise RuntimeError(res.text[:1600])
         pid = res.json()["prompt_id"]
         # A soundtrack can queue behind several long video generations on one GPU.
         deadline = time.monotonic() + 3600
-        while time.monotonic() < deadline:
+        while True:
             data = client.get("/history/" + pid).raise_for_status().json().get(pid)
             if data:
                 if data.get("status", {}).get("status_str") == "error":
@@ -102,8 +106,14 @@ def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
                     },
                 )
                 return target
+            if time.monotonic() >= deadline:
+                pending = (
+                    client.get("/queue").raise_for_status().json()["queue_pending"]
+                )
+                if not any(row[1] == pid for row in pending):
+                    raise TimeoutError(f"ACE-Step render exceeded one hour: {pid}")
+                deadline = time.monotonic() + 3600
             time.sleep(2)
-    raise TimeoutError(f"ACE-Step job {pid} exceeded one hour including queue time")
 
 
 if __name__ == "__main__":
