@@ -49,7 +49,20 @@ def reconstruct(photo, words, model, asset):
             "The exact requested inscription must be visible in the source"
         )
     chosen = max(found, key=lambda row: row["confidence"])
-    left, top, right, bottom = print_crop(rgb.shape, chosen["box"])
+    reconstruct_region(
+        photo, print_crop(rgb.shape, chosen["box"]), model, asset, inscription=chosen
+    )
+
+
+def reconstruct_region(photo, box, model, asset, *, inscription=None):
+    rgb = cv2.imread(str(photo))
+    if rgb is None:
+        raise ValueError(f"Unreadable catalog source: {photo}")
+    left, top, right, bottom = box
+    if not (0 <= left < right <= rgb.shape[1] and 0 <= top < bottom <= rgb.shape[0]):
+        raise ValueError(
+            "The physical detail must lie within the original catalog image"
+        )
     image = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
     network_input = cv2.resize(image, (392, 392)).astype(np.float32) / 255
     network_input -= np.array([0.485, 0.456, 0.406], np.float32)
@@ -99,7 +112,7 @@ def reconstruct(photo, words, model, asset):
             "source": str(photo),
             "source_sha256": fingerprint(photo),
             "model_sha256": fingerprint(model),
-            "inscription": chosen,
+            **({"inscription": inscription} if inscription else {}),
             "pixel_crop": [left, top, right, bottom],
         },
     )

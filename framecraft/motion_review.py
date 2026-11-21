@@ -1,14 +1,16 @@
 """Inspect generated takes against their physical SKU reference before the final edit."""
 
+import hashlib
 from pathlib import Path
 from typing import Literal
 
 import cv2
 import numpy as np
+from filelock import FileLock
 from pydantic import BaseModel, Field
 
 from .campaign_edit import fingerprint
-from .core import read, save
+from .core import home, read, save, setting
 from .director import ask
 
 
@@ -20,6 +22,7 @@ class Inspection(BaseModel):
         "malformed_anatomy",
         "warped_geometry",
         "prominent_gibberish",
+        "incorrect_marking",
         "motion_missing",
     ]
     location: str
@@ -68,16 +71,52 @@ def repair_view(reference, target, action, assessment, model=None):
     return result.action
 
 
-def reference_check(video, reference, *, model=None):
+def reference_check(video, reference, *, model=None, disputed_checks=()):
     video = Path(video)
     dest = video.with_suffix(".review.json")
     signature = (fingerprint(video), fingerprint(reference) if reference else "")
-    if dest.is_file():
-        cached = read(dest)
-        if cached.get("input") == list(signature) and (
-            cached["defect"] != "malformed_anatomy" or "anatomy_review" in cached
+    reviewer = model or setting("VISION_MODEL") or setting("LLM_MODEL") or "default"
+    key = hashlib.sha256("|".join((*signature, reviewer)).encode()).hexdigest()
+    directory = home() / "cache" / "sku-review-v2"
+    directory.mkdir(parents=True, exist_ok=True)
+    entry = directory / (key + ".json")
+    if disputed_checks and (
+        any(check.get("input") != list(signature) for check in disputed_checks)
+        or len({check["defect"] for check in disputed_checks}) < 2
+    ):
+        raise ValueError(
+            "An adjudication requires conflicting checks of the same media"
+        )
+    with FileLock(str(entry) + ".lock"):
+        original = read(dest) if dest.exists() else {}
+        known = read(entry) if entry.exists() else original
+        print_check = original.get("print_inspection", {})
+        if (
+            print_check.get("video_sha256") == signature[0]
+            and print_check.get("passed") is False
         ):
-            return cached
+            known = original
+        if (
+            known.get("input") != list(signature)
+            or known.get("reviewer", reviewer) != reviewer
+            or (
+                known.get("defect") == "malformed_anatomy"
+                and "anatomy_review" not in known
+            )
+            or (disputed_checks and "adjudication" not in known)
+        ):
+            known = _inspect(video, reference, signature, model, disputed_checks)
+        if fingerprint(video) != signature[0]:
+            raise ValueError(f"Take changed during visual review: {video}")
+        known["reviewer"] = reviewer
+        if not entry.exists() or read(entry) != known:
+            save(entry, known)
+        if original != known:
+            save(dest, known)
+        return known
+
+
+def _inspect(video, reference, signature, model, disputed_checks):
     cap = cv2.VideoCapture(str(video))
     tiles = []
     try:
@@ -125,7 +164,19 @@ def reference_check(video, reference, *, model=None):
             else "The three tiles show successive moments in the same creator shot."
         )
         + " Record a severe defect only if it is clearly visible. Identify its exact location and describe the discrepancy. Ignore minor blur, camera angle changes and text that is simply too small to resolve. A hidden face or partly obscured hand is normal. Use none if no material defect is visible.",
-        {"purpose": "Inspect a prospective product film take."},
+        {
+            "purpose": "Inspect a prospective product film take.",
+            **(
+                {
+                    "disputed_checks": list(disputed_checks),
+                    "task": "Resolve the disagreement against the physical reference. Describe the exact "
+                    "construction you see in the source and each shot, including strap counts, "
+                    "connections and placement when relevant. Explain any concrete discrepancy.",
+                }
+                if disputed_checks
+                else {}
+            ),
+        },
         picture,
         model_override=model,
     )
@@ -157,7 +208,6 @@ def reference_check(video, reference, *, model=None):
                 "second": checked.model_dump(),
             },
         }
-    if fingerprint(video) != signature[0]:
-        raise ValueError(f"Take changed during visual review: {video}")
-    save(dest, value)
+    if disputed_checks:
+        value["adjudication"] = list(disputed_checks)
     return value

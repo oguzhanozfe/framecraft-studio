@@ -8,6 +8,38 @@ from framecraft.campaign_experiments import assemble_voice, export, matrix
 from framecraft.core import save
 
 
+def test_reattached_product_take_keeps_its_review_and_adjudicates_once(
+    tmp_path, monkeypatch
+):
+    from framecraft import motion_review
+
+    monkeypatch.setenv("FRAMECRAFT_HOME", str(tmp_path / "state"))
+    calls = []
+
+    def inspect(video, reference, signature, model, disputes):
+        calls.append(video.name)
+        row = {"input": list(signature), "defect": "warped_geometry"}
+        if disputes:
+            row.update(defect="none", adjudication=list(disputes))
+        return row
+
+    monkeypatch.setattr(motion_review, "_inspect", inspect)
+    a, b, ref = [tmp_path / s for s in ("first.mp4", "reattached.mp4", "item.jpg")]
+    for f in (a, b, ref):
+        f.write_bytes(b"exact content")
+    original = motion_review.reference_check(a, ref, model="local")
+    assert motion_review.reference_check(b, ref, model="local") == original
+    conflicting = [original, {**original, "defect": "none"}]
+    for f in (a, b):
+        assert (
+            motion_review.reference_check(
+                f, ref, model="local", disputed_checks=conflicting
+            )["defect"]
+            == "none"
+        )
+    assert len(calls) == 2
+
+
 def test_decode_comparison_catches_an_uncontrolled_picture_change(
     tmp_path, monkeypatch
 ):
