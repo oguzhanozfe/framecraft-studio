@@ -4,6 +4,34 @@ import pytest
 from framecraft.campaign_motion import render, repeated_motion, spans
 
 
+def test_anatomy_confirmation_receives_only_decoded_video_frames(tmp_path, monkeypatch):
+    import cv2
+    from framecraft import motion_review
+
+    ref = tmp_path / "ref.jpg"
+    clip = tmp_path / "cut.mp4"
+    frame = np.full((32, 32, 3), 100, np.uint8)
+    cv2.imwrite(str(ref), frame)
+    writer = cv2.VideoWriter(str(clip), cv2.VideoWriter_fourcc(*"mp4v"), 24, (32, 32))
+    for _ in range(8):
+        writer.write(frame)
+    writer.release()
+    shapes = []
+
+    def ask(schema, instruction, evidence, picture, **kwargs):
+        shapes.append(cv2.imdecode(np.frombuffer(picture, np.uint8), 1).shape[:2])
+        return schema(
+            defect="malformed_anatomy" if len(shapes) == 1 else "none",
+            observation="An independent camera check",
+            location="",
+        )
+
+    monkeypatch.setattr(motion_review, "ask", ask)
+    proof = motion_review._inspect(clip, ref, ("video", "photo"), "local", ())
+    assert shapes == [(800, 620), (400, 930)]
+    assert proof["defect"] == "none" and proof["anatomy_review"]["video_only"]
+
+
 def test_reframe_windows_keep_even_video_coordinates_inside_the_source():
     from framecraft.motion_reframe import windows
 

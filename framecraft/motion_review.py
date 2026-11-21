@@ -101,7 +101,7 @@ def reference_check(video, reference, *, model=None, disputed_checks=()):
             or known.get("reviewer", reviewer) != reviewer
             or (
                 known.get("defect") == "malformed_anatomy"
-                and "anatomy_review" not in known
+                and not known.get("anatomy_review", {}).get("video_only")
             )
             or (disputed_checks and "adjudication" not in known)
         ):
@@ -171,7 +171,9 @@ def _inspect(video, reference, signature, model, disputed_checks):
                     "disputed_checks": list(disputed_checks),
                     "task": "Resolve the disagreement against the physical reference. Describe the exact "
                     "construction you see in the source and each shot, including strap counts, "
-                    "connections and placement when relevant. Explain any concrete discrepancy.",
+                    "connections and placement when relevant. Identify a defect in a generated "
+                    "tile. An observation about the catalog photograph alone cannot establish "
+                    "a defect in the video.",
                 }
                 if disputed_checks
                 else {}
@@ -182,28 +184,29 @@ def _inspect(video, reference, signature, model, disputed_checks):
     )
     value = {"input": list(signature), **result.model_dump()}
     if result.defect == "malformed_anatomy":
+        video_strip = np.hstack(images[-3:])
+        video_picture = cv2.imencode(
+            ".jpg", video_strip, [cv2.IMWRITE_JPEG_QUALITY, 92]
+        )[1].tobytes()
         checked = ask(
             Inspection,
-            "Inspect the visible anatomy and product in these frames. The first tile "
-            + (
-                "is the product reference."
-                if reference
-                else "is the first video sample."
-            )
-            + " Check each visible joint and limb in the remaining tiles, accounting for "
+            "All three tiles are successive frames decoded from the proposed video. "
+            "Inspect visible joints and limbs in each frame, accounting for "
             "foreshortening, hair, garment edges and hand occlusion. Name the specific "
-            "body part and physically impossible connection if one is visible. A real "
+            "body part and physically impossible connection if one is visible. Consider "
+            "intentional close framing when a face or limb falls outside the shot. A real "
             "change of product geometry or garbled writing is a separate defect. Report "
             "the most significant defect with its tile and location. If only fabric "
             "texture, viewing angle or slight motion blur differs, choose none.",
             {"task": "Independent visual inspection of a proposed product take"},
-            picture,
+            video_picture,
             model_override=model,
         )
         value = {
             "input": list(signature),
             **checked.model_dump(),
             "anatomy_review": {
+                "video_only": True,
                 "initial": result.model_dump(),
                 "second": checked.model_dump(),
             },
