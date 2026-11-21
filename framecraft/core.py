@@ -39,6 +39,17 @@ class Brief(BaseModel):
     cta: str = Field("", max_length=70)
     revision: Revision | None = None
 
+    def vocabulary(self, shots):
+        return " ".join(
+            [
+                self.brief,
+                self.hook,
+                self.cta,
+                self.revision.changes if self.revision else "",
+                *(s.get("visual", "") for s in shots),
+            ]
+        )
+
 
 def db():
     con = sqlite3.connect(home() / "studio.sqlite", timeout=30)

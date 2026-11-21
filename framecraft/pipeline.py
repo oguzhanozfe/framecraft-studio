@@ -9,7 +9,7 @@ from .director import angles, copyedit, critique, plan, rewrite_shot
 from .edit import render
 from .footage import cut
 from .providers import generate, inventory
-from .quality import transcript
+from .quality import caption_spelling, transcript
 
 FIXES = {
     "unplanned_text": "Plain unprinted props, blank background, no signage, keep all screens turned away.",
@@ -141,7 +141,7 @@ def make(job):
             if cached:
                 story = read(retry_source / folder.name / "story.json")
                 story["retry_source"] = retry_source.name
-                copyedit(story["shots"], brief.language)
+                copyedit(story["shots"], brief)
             else:
                 story = plan(brief, angle, reference)
         except Exception as exc:
@@ -365,6 +365,12 @@ def make(job):
             )
             save(folder / "critique.json", review)
             reasons.extend(qa["blockers"])
+            reasons.extend(
+                "Caption spelling: " + issue
+                for issue in caption_spelling(
+                    captions, brief.language, brief.vocabulary(story["shots"])
+                )
+            )
             if not qa["passed"] and not reasons:
                 reasons.append("Technical score under 75")
             score = 0.7 * qa["score"] + 0.3 * sum(scores) / len(scores)

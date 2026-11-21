@@ -9,6 +9,38 @@ from PIL import Image
 from .core import setting
 
 
+@lru_cache(maxsize=2)
+def spelling_dictionary(language):
+    from phunspell import Phunspell
+
+    return Phunspell({"tr": "tr_TR", "en": "en_US"}[language])
+
+
+def caption_spelling(captions, language, vocabulary=""):
+    pattern = r"[^\W\d_]+(?:['’][^\W\d_]+)*"
+
+    def normalize(word):
+        return (
+            word.replace("I", "ı").replace("İ", "i") if language == "tr" else word
+        ).lower()
+
+    allowed = {normalize(w) for w in re.findall(pattern, vocabulary)}
+    dictionary = spelling_dictionary(language)
+    issues = []
+    for cue, caption in enumerate(captions, 1):
+        for word in dict.fromkeys(re.findall(pattern, caption)):
+            lower = normalize(word)
+            if (
+                len(word) > 1
+                and not word.isupper()
+                and lower not in allowed
+                and not dictionary.lookup(word)
+                and not dictionary.lookup(lower)
+            ):
+                issues.append(f"Cue {cue} · {word}")
+    return issues
+
+
 @lru_cache(maxsize=8)
 def glyph_template(path):
     with Image.open(path) as im:

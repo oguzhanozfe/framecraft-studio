@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 
 from .core import jobdir, query, read, setting
+from .quality import caption_spelling
 
 ANGLES = [
     "demo",
@@ -205,7 +206,7 @@ def revision_plan(brief, angle):
                     {"visible_scene": shot.visual},
                 )
                 shots.append({**shot.model_dump(), **evidence.model_dump()})
-            copyedit(shots, brief.language)
+            copyedit(shots, brief)
             return {
                 "director": "vision and language models",
                 "text_model": setting("LLM_MODEL") or "automatic discovery",
@@ -222,21 +223,30 @@ def revision_plan(brief, angle):
     raise ValueError("Revision planning checks failed: " + " / ".join(issues))
 
 
-def copyedit(shots, language):
-    copy = ask(
-        CopyDeck,
+def copyedit(shots, brief):
+    instruction = (
         "Copyedit these captions for native grammar, idiom and spelling in the requested language. "
         "Return exactly one succinct, complete caption per shot in order. Preserve the offer and meaning. "
         "Preserve the actual product name using the visible scene for disambiguation. "
-        "Avoid repetition, sentence fragments that depend on a different caption, and new claims.",
-        {
-            "language": language,
-            "captions": [s["caption"] for s in shots],
-            "subjects": [s["visual"] for s in shots],
-        },
+        "Avoid repetition, sentence fragments that depend on a different caption, and new claims."
     )
-    if len(copy.captions) != len(shots):
-        raise ValueError("Copy editor returned an incorrect caption count")
+    payload = {
+        "language": brief.language,
+        "captions": [s["caption"] for s in shots],
+        "subjects": [s["visual"] for s in shots],
+    }
+    for _ in range(2):
+        copy = ask(CopyDeck, instruction, payload)
+        if len(copy.captions) != len(shots):
+            raise ValueError("Copy editor returned an incorrect caption count")
+        issues = caption_spelling(
+            copy.captions, brief.language, brief.vocabulary(shots)
+        )
+        if not issues:
+            break
+        payload.update(captions=copy.captions, words_to_rephrase=issues)
+    else:
+        raise ValueError("Caption spelling needs review: " + " / ".join(issues))
     for shot, caption in zip(shots, copy.captions):
         shot["caption"] = caption
 

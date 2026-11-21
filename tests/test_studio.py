@@ -431,6 +431,19 @@ def test_text_zone_and_spelling():
     assert text_checks(lines, "", "raw") == ["unplanned_text"]
 
 
+def test_caption_spelling_catches_malformed_words_and_respects_brief_terms():
+    from framecraft.quality import caption_spelling
+
+    assert caption_spelling(["Lila silikon dil oyuncakı"], "tr", "lila") == [
+        "Cue 1 · oyuncakı"
+    ]
+    assert (
+        caption_spelling(["Lila silikon keyfi.", "Bu gece seninle."], "tr", "lila")
+        == []
+    )
+    assert caption_spelling(["Try Framecraft"], "en", "Framecraft") == []
+
+
 def test_director_retries_unsupported_local_options_with_schema(monkeypatch):
     import httpx
 

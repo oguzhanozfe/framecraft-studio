@@ -7,8 +7,9 @@ import time
 from pydantic import BaseModel, Field
 
 from .audit import audit
-from .core import jobdir, query, read, record, save
+from .core import Brief, jobdir, query, read, record, save
 from .director import critique
+from .quality import caption_spelling
 
 
 class Candidate(BaseModel):
@@ -85,6 +86,15 @@ def compare(job):
         save(folder / "critique.json", review)
         score = qa["score"]
         reasons = list(qa["blockers"])
+        source_root = jobdir(choice.job)
+        if cues and (source_root / "brief.json").is_file():
+            brief = Brief.model_validate(read(source_root / "brief.json"))
+            storyboard = source_root / f"v{choice.variant}" / "story.json"
+            shots = read(storyboard)["shots"] if storyboard.is_file() else []
+            spelling = caption_spelling(
+                [cue["text"] for cue in cues], brief.language, brief.vocabulary(shots)
+            )
+            reasons.extend("Caption spelling: " + word for word in spelling)
         if not qa["passed"] and not reasons:
             reasons.append("Low technical score")
         if review["status"] == "assessed":
