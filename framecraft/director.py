@@ -90,10 +90,13 @@ class Review(BaseModel):
     alignment: Literal["strong", "partial", "weak", "unrelated"]
 
 
-class Evidence(BaseModel):
-    check_id: int
+class Verdict(BaseModel):
     result: Literal["met", "contradicted", "unclear"]
     observation: str = Field(min_length=3, max_length=500)
+
+
+class Evidence(Verdict):
+    check_id: int
 
 
 class CheckedReview(Review):
@@ -466,14 +469,26 @@ def critique(folder, report, brief="", transcript_data=None, *, checks=()):
             score = min(score, 40)
         failures = []
         if checks:
-            ids = sorted(row.check_id for row in result.evidence_by_check)
-            if ids != list(range(1, len(checks) + 1)):
-                return {
-                    "status": "unavailable",
-                    "reason": "The vision model did not address every required check exactly once",
-                    "checks": checks,
-                    "observations": observed.model_dump(),
-                }
+            complete = []
+            valid_ids = all(
+                1 <= row.check_id <= len(checks) for row in result.evidence_by_check
+            )
+            for number, check in enumerate(checks, 1):
+                rows = [
+                    row for row in result.evidence_by_check if row.check_id == number
+                ]
+                if valid_ids and len(rows) == 1:
+                    complete.append(rows[0])
+                    continue
+                verdict = ask(
+                    Verdict,
+                    "Inspect the image for this single visual condition. "
+                    "Cite a visible frame or object. If it cannot be established, return unclear.",
+                    {"condition": check, "blind_observations": observed.model_dump()},
+                    pic,
+                )
+                complete.append(Evidence(check_id=number, **verdict.model_dump()))
+            result.evidence_by_check = complete
             failures = [
                 f"{checks[row.check_id - 1]} — {row.observation}"
                 for row in result.evidence_by_check

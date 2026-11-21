@@ -193,7 +193,8 @@ def test_fresh_model_generation_requires_a_director(monkeypatch):
     "results,expected_status",
     [
         ([(1, "unclear"), (2, "met")], "assessed"),
-        ([(1, "met")], "unavailable"),
+        ([(1, "met")], "assessed"),
+        ([(0, "met"), (1, "met")], "assessed"),
         ([(1, "met"), (1, "met")], "unavailable"),
     ],
 )
@@ -211,6 +212,18 @@ def test_revision_checks_require_complete_unambiguous_evidence(
         if schema is director.Observation:
             assert "required_checks" not in payload
             return schema(visible_subjects=["square"], settings=[], visible_actions=[])
+        if schema is director.Verdict:
+            assert picture and "blind_observations" in payload
+            if expected_status == "unavailable":
+                raise ValueError("Vision was interrupted")
+            if payload["condition"] == "show a sphere":
+                return schema(
+                    result="met", observation="Visible rounded object in frame 0"
+                )
+            assert payload["condition"] == "blue"
+            return schema(
+                result="unclear", observation="Lighting prevents a color reading"
+            )
         assert len(payload["required_checks"]) == 2
         return schema(
             subject_evidence="visible",
@@ -235,10 +248,13 @@ def test_revision_checks_require_complete_unambiguous_evidence(
     )
     assert result["status"] == expected_status
     if expected_status == "assessed":
-        assert result["brief_fit"] <= 40 and "sphere" in result["failed_checks"][0]
+        assert result["brief_fit"] <= 40 and len(result["failed_checks"]) == 1
+        assert [e["check_id"] for e in result["evidence_by_check"]] == [1, 2]
 
 
-@pytest.mark.parametrize("final_status", ["assessed", "unavailable"])
+@pytest.mark.parametrize(
+    "final_status", ["assessed", "unavailable", "shot_unavailable"]
+)
 def test_model_retry_and_final_gate(monkeypatch, final_status):
     from framecraft.core import Revision
 
@@ -295,6 +311,8 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
     monkeypatch.setattr(pipeline, "render", render)
 
     def critique(folder, report, direction, *, checks):
+        if final_status == "shot_unavailable":
+            return {"status": "unavailable", "reason": "offline"}
         if checks == story["final_checks"]:
             assert (
                 "show the bare item" in direction and "show the carton" not in direction
@@ -315,6 +333,10 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
 
     monkeypatch.setattr(pipeline, "critique", critique)
     pipeline.make(job)
+    if final_status == "shot_unavailable":
+        assert len(prompts) == 1 and not (root / "winner.mp4").exists()
+        assert "offline" in read(root / "result.json")["ranking"][0]["reasons"][0]
+        return
     assert len(prompts) == 2 and prompts[1].startswith(
         "A different model-directed shot"
     )

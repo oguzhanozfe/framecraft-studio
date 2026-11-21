@@ -216,11 +216,13 @@ def make(job):
                         )
                         save(path / "review.json", review)
                         if checks and review["status"] != "assessed":
-                            qa["passed"] = False
-                            qa["blockers"] = [
-                                "Visual checks unavailable: "
+                            reason = (
+                                f"Shot {si + 1} visual checks unavailable: "
                                 + review.get("reason", "unknown")
-                            ]
+                            )
+                            event["blockers"] = [reason]
+                            reasons.append(reason)
+                            break
                         elif review["status"] == "assessed" and (
                             review["severe_visual_defects"] or review["brief_fit"] < 50
                         ):
@@ -255,6 +257,8 @@ def make(job):
                 reasons.append(
                     f"Shot {si + 1} failed both attempts: " + " / ".join(problems)
                 )
+                break
+            if reasons:
                 break
         if len(chosen) == len(story["shots"]):
             captions = [s["caption"] for s in story["shots"]]
