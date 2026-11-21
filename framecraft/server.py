@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import accounts, catalog, config, insights, publish
 from .compare import Comparison, compare, resolve
-from .core import Brief, create_job, home, jobdir, query, read, record, save
+from .core import Brief, Revision, create_job, home, jobdir, query, read, record, save
 from .pipeline import analyze_job, make
 from .providers import inventory
 
@@ -150,6 +150,10 @@ def submit(kind, file, data):
 
 @app.post("/api/create", status_code=202)
 def create(brief: Brief):
+    if brief.revision:
+        revision_source(brief.revision.job, brief.revision.variant)
+        if brief.use_footage:
+            raise ValueError("A revision renders new footage")
     if brief.use_footage and not brief.reference:
         raise ValueError("Choose a reference video first")
     if brief.reference:
@@ -158,6 +162,43 @@ def create(brief: Brief):
             folder / "result.json"
         ):
             raise ValueError("Choose a completed reference analysis")
+    return submit("create", "brief.json", brief.model_dump())
+
+
+class RevisionRequest(BaseModel):
+    changes: str = Field(min_length=3, max_length=1500)
+    variant: int | None = Field(None, ge=1, le=10)
+    variants: int | None = Field(None, ge=1, le=10)
+
+
+def revision_source(job, variant):
+    folder = jobdir(job)
+    rows = query("SELECT kind,status FROM jobs WHERE id=?", (job,))
+    if not rows:
+        raise HTTPException(404)
+    if rows[0]["kind"] != "create" or rows[0]["status"] not in (
+        "complete",
+        "needs_review",
+    ):
+        raise ValueError("Choose a finished creative job")
+    if variant is None:
+        result = read(folder / "result.json")
+        variant = (result.get("winner") or {}).get("variant")
+    source = folder / f"v{variant}"
+    if not (source / "master.mp4").is_file() or not (source / "story.json").is_file():
+        raise ValueError("Choose a rendered variant with a storyboard")
+    return variant
+
+
+@app.post("/api/jobs/{job}/revise", status_code=202)
+def revise(job: str, request: RevisionRequest):
+    variant = revision_source(job, request.variant)
+    brief = Brief.model_validate(read(jobdir(job) / "brief.json"))
+    brief.revision = Revision(job=job, variant=variant, changes=request.changes.strip())
+    brief.variants = request.variants or brief.variants
+    brief.use_footage = False
+    brief.reference = None
+    brief.hook = brief.cta = ""
     return submit("create", "brief.json", brief.model_dump())
 
 
@@ -213,6 +254,9 @@ def detail(job: str):
     ]
     return {
         **rows[0],
+        "revision": read(folder / "brief.json").get("revision")
+        if (folder / "brief.json").is_file()
+        else None,
         "result": read(result) if result.exists() else None,
         "assets": assets,
         "deliveries": query("SELECT * FROM deliveries WHERE job=?", (job,)),

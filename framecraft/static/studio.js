@@ -236,6 +236,23 @@ function review(v) {
     list(v.beats) +
     "<b>Gözlemler</b>" +
     list(v.evidence) +
+    (v.evidence_by_check?.length
+      ? "<b>Görsel kabul koşulları</b>" +
+        list(
+          v.evidence_by_check.map(
+            (x) =>
+              (({
+                met: "Geçti",
+                contradicted: "Karşılanmadı",
+                unclear: "Belirsiz",
+              })[x.result] || x.result) +
+              " · " +
+              (v.checks?.[x.check_id - 1] || "") +
+              " · " +
+              x.observation,
+          ),
+        )
+      : "") +
     "<b>İyileştirmeler</b>" +
     list(v.improvements) +
     ((v.severe_visual_defects || []).length
@@ -269,6 +286,14 @@ async function jobView(id) {
     crit =
       r.critique || (j.assets.includes(critPath) ? await get(critPath) : null);
   const body = $("#jobBody");
+  const sources =
+    j.kind === "create" && ["complete", "needs_review"].includes(j.status)
+      ? rank.filter((x) =>
+          ["master.mp4", "story.json"].every((f) =>
+            j.assets.includes("v" + x.variant + "/" + f),
+          ),
+        )
+      : [];
   body.innerHTML =
     '<div class="intro"><h1>' +
     esc(label[j.kind] || j.kind) +
@@ -277,6 +302,15 @@ async function jobView(id) {
     " · " +
     esc(j.detail) +
     "</p></div>" +
+    (j.revision
+      ? '<p><a href="#job/' +
+        esc(j.revision.job) +
+        '">Kaynak kurgu · V' +
+        esc(j.revision.variant) +
+        "</a> · " +
+        esc(j.revision.changes) +
+        "</p>"
+      : "") +
     (clip
       ? '<div class="split"><div><video id="player" controls playsinline src="' +
         fileUrl(id, clip) +
@@ -334,6 +368,24 @@ async function jobView(id) {
           )
           .join("") +
         "</div>"
+      : "") +
+    (sources.length
+      ? '<form class="card" id="revisionForm"><h2>Bu kurguyu revize et</h2><label>Kaynak varyant<select name="variant">' +
+        sources
+          .map(
+            (x) =>
+              '<option value="' +
+              x.variant +
+              '"' +
+              (x.variant === v ? " selected" : "") +
+              ">V" +
+              x.variant +
+              " · " +
+              esc(x.angle) +
+              "</option>",
+          )
+          .join("") +
+        '</select></label><label>Neyi değiştirelim?<textarea name="changes" minlength="3" maxlength="1500" required></textarea></label><button>Revizyon üret</button></form>'
       : "") +
     (r.analysis
       ? '<div class="card"><h2>Kurgu ve metin</h2>' +
@@ -469,6 +521,15 @@ async function jobView(id) {
       if (e.target.dataset.frame) showFrame(Number(e.target.dataset.frame));
     };
   }
+  if ($("#revisionForm"))
+    form("#revisionForm", async (f) =>
+      goJob(
+        await api("/api/jobs/" + id + "/revise", "POST", {
+          variant: Number(f.get("variant")),
+          changes: f.get("changes").trim(),
+        }),
+      ),
+    );
   if ($("#useRef"))
     $("#useRef").onclick = () => {
       sessionStorage.setItem("framecraft-ref", id);

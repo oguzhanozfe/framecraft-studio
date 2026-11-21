@@ -26,6 +26,8 @@ Open [Studio on localhost](http://127.0.0.1:7865). **Analiz** works on CPU immed
 
 For a real game capture or product demo, select a completed reference and choose **Bu çekimin gerçek görüntülerini kullan**. Studio chooses moving sections from the supplied footage, preserves its framing, and typesets and audits the resulting cut. This mode also works without a generator.
 
+To revise a rendered creative, open its job, choose a source variant in **Bu kurguyu revize et**, and describe the change. The vision director reads frames from that cut, writes new shot prompts and defines visible acceptance criteria. The renderer generates fresh shots. A failed check triggers one new attempt informed by the evidence. A revision needs a working vision model to qualify as a winner. The original cut stays available. API clients can POST `{"changes":"…","variant":1,"variants":2}` to `/api/jobs/{job}/revise` with the `X-Framecraft: 1` header. Omit `variant` to use the source winner and `variants` to inherit its batch size.
+
 ## Connect a renderer
 
 Open **Bağlantılar**. Studio checks the actual node types and model filenames advertised by ComfyUI. It reports missing components and the GPU memory class. Initial ranks are explicit priors. Completed local runs supply scores, pass rates and wall-clock measurements.
@@ -40,7 +42,7 @@ The download installer pins the Hugging Face revision returned for that install 
 
 ## Director and quality control
 
-Studio discovers a local OpenAI-compatible endpoint at `http://127.0.0.1:1234/v1`. LM Studio, a compatible gateway or a hosted text/vision service can be selected under **Bağlantılar**. A configured remote service receives the brief, relevant OCR and selected keyframes. The video renderer can remain local. An unavailable director falls back to a rule-based storyboard and records that choice. An unavailable vision model leaves semantic review marked unavailable.
+Studio discovers a local OpenAI-compatible endpoint at `http://127.0.0.1:1234/v1`. LM Studio, a compatible gateway or a hosted text/vision service can be selected under **Bağlantılar**. A configured remote service receives the brief, relevant OCR and selected keyframes. The video renderer can remain local. Model-directed generations require a working director. The source-footage editor can use a local storyboard when the director is offline. The explicit offline storyboard mode remains available with `FRAMECRAFT_DIRECTOR=off` for fresh briefs. Revisions always require model direction. Video analysis records unavailable semantic reviews.
 
 1. The director builds an opening, demonstration and CTA with short captions. A reference contributes observations and pacing. Each variant gets a creative angle and independently drawn seeds.
 2. For ComfyUI, the sampler monitor reads available late-step previews. Two consecutive suspect steps can cancel the specific prompt through the job-scoped API. Preview support varies by backend and model. H3 and LTX decode final frames in batches. Each completed shot gets a full audit before the next shot begins.

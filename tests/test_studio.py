@@ -16,6 +16,229 @@ from framecraft.quality import glyph_quality
 from framecraft.server import app
 
 
+def test_revise_uses_selected_master_without_mutating_parent(monkeypatch):
+    from framecraft import server
+    from framecraft.core import record
+
+    parent = create_job("create")
+    root = jobdir(parent)
+    spec = Brief(brief="The presenter opens a carton", variants=3, hook="Old hook")
+    save(root / "brief.json", spec.model_dump())
+    source = root / "v2"
+    source.mkdir()
+    (source / "master.mp4").write_bytes(b"previous cut")
+    save(source / "story.json", {"shots": []})
+    save(root / "result.json", {"winner": {"variant": 2}})
+    record(parent, "complete", "Ready")
+    monkeypatch.setattr(server.pool, "submit", lambda *args: None)
+    with TestClient(app) as client:
+
+        def revise(data):
+            return client.post(
+                f"/api/jobs/{parent}/revise", headers={"X-Framecraft": "1"}, json=data
+            )
+
+        assert revise({"changes": "New mood", "variant": 1}).status_code == 400
+        assert revise({"changes": "   "}).status_code in (400, 422)
+        response = revise({"changes": "Show the unpackaged product"})
+        assert response.status_code == 202
+        child = response.json()["id"]
+        data = read(jobdir(child) / "brief.json")
+        assert data["revision"] == {
+            "job": parent,
+            "variant": 2,
+            "changes": "Show the unpackaged product",
+        }
+        assert data["variants"] == 3 and not data["use_footage"] and not data["hook"]
+        assert client.get(f"/api/jobs/{child}").json()["revision"] == data["revision"]
+    assert (source / "master.mp4").read_bytes() == b"previous cut"
+    assert read(root / "brief.json") == spec.model_dump()
+
+
+def test_revision_director_reads_parent_and_does_not_substitute_a_template(monkeypatch):
+    from PIL import Image
+
+    from framecraft import director
+    from framecraft.core import Revision
+
+    parent = create_job("create")
+    source = jobdir(parent) / "v1"
+    (source / "check").mkdir(parents=True)
+    Image.new("RGB", (128, 128), "blue").save(source / "check" / "key-000001.jpg")
+    save(
+        source / "story.json", {"direction": "second-generation direction", "shots": []}
+    )
+    brief = Brief(
+        brief="original",
+        shots=1,
+        revision=Revision(job=parent, variant=1, changes="New product shot"),
+    )
+    monkeypatch.setenv("FRAMECRAFT_DIRECTOR", "auto")
+
+    def ask(schema, instruction, payload, picture):
+        assert picture.startswith(b"\xff\xd8")
+        assert payload["previous_direction"] == "second-generation direction"
+        assert payload["changes"] == "New product shot"
+        raise RuntimeError("model offline")
+
+    monkeypatch.setattr(director, "ask", ask)
+    with pytest.raises(RuntimeError, match="model offline"):
+        director.plan(brief, "reveal", {})
+
+
+def test_fresh_model_generation_requires_a_director(monkeypatch):
+    import httpx
+
+    from framecraft import director
+
+    monkeypatch.setenv("FRAMECRAFT_DIRECTOR", "auto")
+
+    def offline(*args):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(director, "ask", offline)
+    with pytest.raises(ValueError, match="director connection"):
+        director.plan(Brief(brief="show a racing bike"), "demo", {})
+    assert director.plan(
+        Brief(brief="cut the source footage", use_footage=True), "demo", {}
+    )["director"].startswith("local storyboard")
+
+
+@pytest.mark.parametrize(
+    "results,expected_status",
+    [
+        ([(1, "unclear"), (2, "met")], "assessed"),
+        ([(1, "met")], "unavailable"),
+        ([(1, "met"), (1, "met")], "unavailable"),
+    ],
+)
+def test_revision_checks_require_complete_unambiguous_evidence(
+    tmp_path, monkeypatch, results, expected_status
+):
+    from PIL import Image
+
+    from framecraft import director
+
+    Image.new("RGB", (100, 100), "blue").save(tmp_path / "key-000000.jpg")
+    monkeypatch.setenv("FRAMECRAFT_DIRECTOR", "auto")
+
+    def ask(schema, instruction, payload, picture):
+        if schema is director.Observation:
+            assert "required_checks" not in payload
+            return schema(visible_subjects=["square"], settings=[], visible_actions=[])
+        assert len(payload["required_checks"]) == 2
+        return schema(
+            subject_evidence="visible",
+            action_evidence="visible",
+            style="",
+            hook="",
+            audience="",
+            beats=[],
+            evidence=[],
+            improvements=[],
+            severe_visual_defects=[],
+            alignment="strong",
+            evidence_by_check=[
+                {"check_id": i, "result": r, "observation": "Frame 0 shows a square"}
+                for i, r in results
+            ],
+        )
+
+    monkeypatch.setattr(director, "ask", ask)
+    result = director.critique(
+        tmp_path, {"frequent_text": [], "shots": []}, checks=["show a sphere", "blue"]
+    )
+    assert result["status"] == expected_status
+    if expected_status == "assessed":
+        assert result["brief_fit"] <= 40 and "sphere" in result["failed_checks"][0]
+
+
+@pytest.mark.parametrize("final_status", ["assessed", "unavailable"])
+def test_model_retry_and_final_gate(monkeypatch, final_status):
+    from framecraft.core import Revision
+
+    job = create_job("create")
+    root = jobdir(job)
+    brief = Brief(
+        brief="show the carton",
+        variants=1,
+        shots=1,
+        revision=Revision(job="a" * 32, variant=1, changes="show the bare item"),
+    )
+    save(root / "brief.json", brief.model_dump())
+    shot = {"visual": "First model idea", "caption": "Detay", "checks": ["round item"]}
+    story = {
+        "angle": "detail",
+        "shots": [shot],
+        "direction": "unpackaged product",
+        "final_checks": ["unpackaged item"],
+    }
+    monkeypatch.setattr(pipeline, "plan", lambda *args: story)
+    monkeypatch.setattr(
+        pipeline, "inventory", lambda: {"models": [{"id": "h3", "available": True}]}
+    )
+    prompts = []
+
+    def generate(provider, prompt, seed, platform, output, progress, lora):
+        prompts.append(prompt)
+        output.write_bytes(b"renderer output")
+        return output
+
+    monkeypatch.setattr(pipeline, "generate", generate)
+
+    def rewrite(shot, changes, visual, findings):
+        assert "carton still visible" in findings and changes == "show the bare item"
+        return "A different model-directed shot"
+
+    monkeypatch.setattr(pipeline, "rewrite_shot", rewrite)
+    monkeypatch.setattr(
+        pipeline,
+        "audit",
+        lambda *args, **kwargs: {
+            "score": 99,
+            "passed": True,
+            "blockers": [],
+            "frames": 3,
+        },
+    )
+
+    def render(clips, captions, shape, folder, repair, preserve_source):
+        path = folder / "master.mp4"
+        path.write_bytes(clips[0].read_bytes())
+        return path, []
+
+    monkeypatch.setattr(pipeline, "render", render)
+
+    def critique(folder, report, direction, *, checks):
+        if checks == story["final_checks"]:
+            assert (
+                "show the bare item" in direction and "show the carton" not in direction
+            )
+            return {
+                "status": final_status,
+                "brief_fit": 95,
+                "severe_visual_defects": [],
+            }
+        assert checks == shot["checks"]
+        passed = len(prompts) > 1
+        return {
+            "status": "assessed",
+            "brief_fit": 95 if passed else 40,
+            "severe_visual_defects": [],
+            "failed_checks": [] if passed else ["carton still visible"],
+        }
+
+    monkeypatch.setattr(pipeline, "critique", critique)
+    pipeline.make(job)
+    assert len(prompts) == 2 and prompts[1].startswith(
+        "A different model-directed shot"
+    )
+    assert read(root / "v1" / "attempts.json")[0]["visual_findings"] == [
+        "carton still visible"
+    ]
+    assert (root / "winner.mp4").exists() == (final_status == "assessed")
+
+
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("FRAMECRAFT_HOME", str(tmp_path / "studio"))

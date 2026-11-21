@@ -20,6 +20,12 @@ def setting(key, default=""):
     return os.environ.get("FRAMECRAFT_" + key) or default
 
 
+class Revision(BaseModel):
+    job: str = Field(pattern="^[a-f0-9]{32}$")
+    variant: int = Field(ge=1, le=10)
+    changes: str = Field(min_length=3, max_length=1500)
+
+
 class Brief(BaseModel):
     brief: str = Field(min_length=3, max_length=3000)
     platform: Literal["vertical", "square", "wide"] = "vertical"
@@ -31,6 +37,7 @@ class Brief(BaseModel):
     use_footage: bool = False
     hook: str = Field("", max_length=70)
     cta: str = Field("", max_length=70)
+    revision: Revision | None = None
 
 
 def db():

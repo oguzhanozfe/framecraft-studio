@@ -4,7 +4,7 @@ import time
 
 from .audit import audit
 from .core import Brief, jobdir, query, read, record, save, setting
-from .director import angles, critique, plan
+from .director import angles, critique, plan, rewrite_shot
 from .edit import render
 from .footage import cut
 from .providers import generate, inventory
@@ -57,7 +57,7 @@ def make(job):
     if not available:
         raise RuntimeError("No compatible renderer. See Models and Settings.")
     reference = {}
-    if brief.reference:
+    if brief.reference and not brief.revision:
         ref = read(jobdir(brief.reference) / "result.json")
         reference = {
             "style": ref.get("critique", {}),
@@ -72,7 +72,8 @@ def make(job):
         from .catalog import discover, install_lora
 
         try:
-            entries = discover(" ".join(brief.brief.split()[:4]))
+            topic = brief.revision.changes if brief.revision else brief.brief
+            entries = discover(" ".join(topic.split()[:4]))
             eligible = next(
                 (r for r in entries if "Image" in (r["commercial_use"] or [])), None
             )
@@ -93,12 +94,18 @@ def make(job):
         progress(f"Variant {vi + 1}/{brief.variants} · storyboard")
         story = plan(brief, angle_order[vi % len(angle_order)], reference)
         save(folder / "story.json", story)
+        direction_input = brief.revision.changes if brief.revision else brief.brief
         chosen = []
         scores = []
         events = []
         providers = []
         reasons = []
         for si, shot in enumerate(story["shots"]):
+            visual = shot["visual"]
+            checks = list(shot.get("checks", []))
+            if shot.get("subject_detail"):
+                checks.append(shot["subject_detail"])
+                visual += " " + shot["subject_detail"]
             hint = "Clean frame. No visible writing, logos, subtitles or watermark. Natural movement, one continuous shot."
             seed = secrets.randbelow(2**31 - 1)
             for attempt in range(2):
@@ -112,9 +119,29 @@ def make(job):
                 # Prefer the same renderer for visual consistency when repairing image content.
                 if attempt and events and "error" not in events[-1]:
                     renderer = events[-1]["provider"]
+                    if checks:
+                        progress("Director revising the rejected shot")
+                        try:
+                            visual = rewrite_shot(
+                                {**shot, "checks": checks},
+                                direction_input,
+                                visual,
+                                events[-1]["blockers"],
+                            )
+                        except Exception as exc:
+                            events.append(
+                                {
+                                    "shot": si + 1,
+                                    "attempt": attempt + 1,
+                                    "provider": renderer,
+                                    "error": f"Could not obtain revised prompt ({type(exc).__name__})",
+                                }
+                            )
+                            save(folder / "attempts.json", events)
+                            continue
                 prompt = " ".join(
                     [
-                        shot["visual"],
+                        visual,
                         shot.get("sound", ""),
                         triggers if renderer == "h3" else "",
                         hint,
@@ -162,27 +189,41 @@ def make(job):
                     event.update(
                         score=qa["score"], blockers=qa["blockers"], frames=qa["frames"]
                     )
-                    if qa["passed"] and setting("SHOT_VISION", "on") == "on":
+                    if qa["passed"] and (
+                        checks or setting("SHOT_VISION", "on") == "on"
+                    ):
                         progress("Reviewing shot composition and continuity")
-                        review = critique(path / "audit", qa, shot["visual"])
+                        review = critique(
+                            path / "audit", qa, shot["visual"], checks=checks
+                        )
                         save(path / "review.json", review)
-                        if review["status"] == "assessed" and (
+                        if checks and review["status"] != "assessed":
+                            qa["passed"] = False
+                            qa["blockers"] = [
+                                "Visual checks unavailable: "
+                                + review.get("reason", "unknown")
+                            ]
+                        elif review["status"] == "assessed" and (
                             review["severe_visual_defects"] or review["brief_fit"] < 50
                         ):
                             qa["passed"] = False
-                            qa["blockers"] = review["severe_visual_defects"] or [
-                                "Subject or action does not match the shot"
-                            ]
+                            qa["blockers"] = review.get("failed_checks", []) + review[
+                                "severe_visual_defects"
+                            ] or ["Subject or action does not match the shot"]
+                        if not qa["passed"]:
                             event["visual_findings"] = qa["blockers"]
                     if qa["passed"]:
                         chosen.append(clip)
                         providers.append(renderer)
                         scores.append(qa["score"])
                         break
-                    hint = " ".join(
-                        FIXES.get(k, "Correct this visible defect: " + k)
-                        for k in qa["blockers"] or qa["flag_counts"]
-                    )
+                    findings = qa["blockers"] or list(qa["flag_counts"])
+                    event["blockers"] = findings or ["Technical score under 75"]
+                    if not checks:
+                        hint = " ".join(
+                            FIXES.get(k, "Correct this visible defect: " + k)
+                            for k in findings
+                        )
                 except Exception as exc:
                     event["error"] = str(exc)[:700]
                     hint = "Use a simple clean composition."
@@ -190,7 +231,12 @@ def make(job):
                     save(folder / "attempts.json", events)
                 seed = secrets.randbelow(2**31 - 1)
             else:
-                reasons.append(f"Shot {si + 1} failed both attempts")
+                problems = events[-1].get("blockers") or [
+                    events[-1].get("error", "technical score")
+                ]
+                reasons.append(
+                    f"Shot {si + 1} failed both attempts: " + " / ".join(problems)
+                )
                 break
         if len(chosen) == len(story["shots"]):
             captions = [s["caption"] for s in story["shots"]]
@@ -221,7 +267,14 @@ def make(job):
                     break
             review_dir = folder / ("check-repair" if repair else "check")
             progress("Reviewing the final cut against the brief")
-            review = critique(review_dir, qa, brief.brief)
+            direction = (
+                story["direction"] + "\nRequested changes: " + brief.revision.changes
+                if brief.revision
+                else brief.brief
+            )
+            review = critique(
+                review_dir, qa, direction, checks=story.get("final_checks", [])
+            )
             save(folder / "critique.json", review)
             reasons.extend(qa["blockers"])
             if not qa["passed"] and not reasons:
@@ -230,8 +283,14 @@ def make(job):
             if review["status"] == "assessed":
                 score = score * 0.75 + review["brief_fit"] * 0.25
                 reasons.extend(review["severe_visual_defects"])
+                reasons.extend(review.get("failed_checks", []))
                 if review["brief_fit"] < 55:
                     reasons.append("Low brief alignment")
+            elif story.get("final_checks"):
+                reasons.append(
+                    "Required final visual checks unavailable: "
+                    + review.get("reason", "unknown")
+                )
             level = review["status"]
         else:
             score = 0
