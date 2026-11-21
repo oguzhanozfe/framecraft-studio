@@ -253,7 +253,7 @@ def test_revision_checks_require_complete_unambiguous_evidence(
 
 
 @pytest.mark.parametrize(
-    "final_status", ["assessed", "unavailable", "shot_unavailable"]
+    "final_status", ["assessed", "unavailable", "shot_unavailable", "recovered"]
 )
 def test_model_retry_and_final_gate(monkeypatch, final_status):
     from framecraft.core import Revision
@@ -275,6 +275,29 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
         "final_checks": ["unpackaged item"],
     }
     monkeypatch.setattr(pipeline, "plan", lambda *args: story)
+    if final_status == "recovered":
+        parent = create_job("create")
+        variant = jobdir(parent) / "v1"
+        prior = variant / "shot-1-1"
+        (prior / "audit").mkdir(parents=True)
+        (prior / "raw.mp4").write_bytes(b"model-generated source")
+        save(prior / "review.json", {"status": "unavailable"})
+        save(prior / "audit" / "report.json", {"passed": True})
+        save(variant / "story.json", story)
+        save(
+            variant / "attempts.json",
+            [
+                {
+                    "shot": 1,
+                    "attempt": 1,
+                    "provider": "h3",
+                    "prompt": "original render prompt",
+                    "seed": 12,
+                }
+            ],
+        )
+        save(root / "retry-source.json", {"job": parent})
+        monkeypatch.setattr(pipeline, "copyedit", lambda shots, language: None)
     monkeypatch.setattr(
         pipeline, "inventory", lambda: {"models": [{"id": "h3", "available": True}]}
     )
@@ -318,12 +341,12 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
                 "show the bare item" in direction and "show the carton" not in direction
             )
             return {
-                "status": final_status,
+                "status": "assessed" if final_status == "recovered" else final_status,
                 "brief_fit": 95,
                 "severe_visual_defects": [],
             }
         assert checks == shot["checks"]
-        passed = len(prompts) > 1
+        passed = len(prompts) > 1 or final_status == "recovered"
         return {
             "status": "assessed",
             "brief_fit": 95 if passed else 40,
@@ -333,6 +356,13 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
 
     monkeypatch.setattr(pipeline, "critique", critique)
     pipeline.make(job)
+    if final_status == "recovered":
+        assert (
+            prompts == []
+            and (root / "winner.mp4").read_bytes() == b"model-generated source"
+        )
+        assert read(root / "v1" / "attempts.json")[0]["source_job"] == parent
+        return
     if final_status == "shot_unavailable":
         assert len(prompts) == 1 and not (root / "winner.mp4").exists()
         assert "offline" in read(root / "result.json")["ranking"][0]["reasons"][0]

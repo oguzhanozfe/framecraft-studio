@@ -205,22 +205,7 @@ def revision_plan(brief, angle):
                     {"visible_scene": shot.visual},
                 )
                 shots.append({**shot.model_dump(), **evidence.model_dump()})
-            copy = ask(
-                CopyDeck,
-                "Copyedit these captions for native grammar, idiom and spelling in the requested language. "
-                "Return exactly one succinct, complete caption per shot in order. Preserve the offer and meaning. "
-                "Preserve the actual product name using the visible scene for disambiguation. "
-                "Avoid repetition, sentence fragments that depend on a different caption, and new claims.",
-                {
-                    "language": brief.language,
-                    "captions": [s["caption"] for s in shots],
-                    "subjects": [s["visual"] for s in shots],
-                },
-            )
-            if len(copy.captions) != len(shots):
-                raise ValueError("Copy editor returned an incorrect caption count")
-            for shot, caption in zip(shots, copy.captions):
-                shot["caption"] = caption
+            copyedit(shots, brief.language)
             return {
                 "director": "vision and language models",
                 "text_model": setting("LLM_MODEL") or "automatic discovery",
@@ -235,6 +220,25 @@ def revision_plan(brief, angle):
             }
         payload.update(rejected_scenes=scenes, corrections=issues)
     raise ValueError("Revision planning checks failed: " + " / ".join(issues))
+
+
+def copyedit(shots, language):
+    copy = ask(
+        CopyDeck,
+        "Copyedit these captions for native grammar, idiom and spelling in the requested language. "
+        "Return exactly one succinct, complete caption per shot in order. Preserve the offer and meaning. "
+        "Preserve the actual product name using the visible scene for disambiguation. "
+        "Avoid repetition, sentence fragments that depend on a different caption, and new claims.",
+        {
+            "language": language,
+            "captions": [s["caption"] for s in shots],
+            "subjects": [s["visual"] for s in shots],
+        },
+    )
+    if len(copy.captions) != len(shots):
+        raise ValueError("Copy editor returned an incorrect caption count")
+    for shot, caption in zip(shots, copy.captions):
+        shot["caption"] = caption
 
 
 def rewrite_shot(shot, prompt, findings):
@@ -454,7 +458,7 @@ def critique(folder, report, brief="", transcript_data=None, *, checks=()):
                     else {}
                 ),
                 "independent_observations": observed.model_dump(),
-                "criteria": "Check the requested subject and action against independent visual observations. Captions and generic hand movements cannot establish product identity. Mark required objects or actions missing if absent. Mark unspecified when no brief was supplied.",
+                "criteria": "Check the requested subject and action against independent visual observations. Captions and generic hand movements cannot establish product identity. Mark required objects or actions missing if absent. For a still-life or posed product shot, only evaluate movement if the brief or shot explicitly requests it. Mark action unspecified when it asks only to show the subject. Mark unspecified when no brief was supplied.",
                 "ocr": report["frequent_text"][:10],
                 "cuts": report["shots"][:12],
                 "sound": report.get("sound"),

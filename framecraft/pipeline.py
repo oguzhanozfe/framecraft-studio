@@ -3,8 +3,9 @@ import shutil
 import time
 
 from .audit import audit
+from .compare import link_or_copy
 from .core import Brief, jobdir, query, read, record, save, setting
-from .director import angles, critique, plan, rewrite_shot
+from .director import angles, copyedit, critique, plan, rewrite_shot
 from .edit import render
 from .footage import cut
 from .providers import generate, inventory
@@ -38,6 +39,44 @@ def analyze_job(job):
     record(job, "complete", f"{report['frames']} frames analyzed")
 
 
+def interrupted_reviews(folder):
+    if (
+        not (folder / "attempts.json").is_file()
+        or not (folder / "story.json").is_file()
+    ):
+        return {}
+    clips = {}
+    missing_review = False
+    for event in read(folder / "attempts.json"):
+        shot, attempt = event["shot"], event["attempt"]
+        take = folder / f"shot-{shot}-{attempt}"
+        review_file, qa_file = take / "review.json", take / "audit" / "report.json"
+        if (
+            not review_file.is_file()
+            or not qa_file.is_file()
+            or not read(qa_file)["passed"]
+        ):
+            continue
+        review = read(review_file)
+        unavailable = review.get("status") == "unavailable"
+        passed = (
+            review.get("status") == "assessed"
+            and review["brief_fit"] >= 50
+            and not review["severe_visual_defects"]
+            and not review.get("failed_checks")
+        )
+        if not (unavailable or passed):
+            continue
+        raw = next(
+            (p for p in (take / "raw.mp4", take / "raw.webm") if p.is_file()), None
+        )
+        if raw:
+            missing_review |= unavailable
+            if passed or shot not in clips:
+                clips[shot] = (event, raw)
+    return clips if missing_review else {}
+
+
 def make(job):
     root = jobdir(job)
     brief = Brief.model_validate(read(root / "brief.json"))
@@ -66,6 +105,8 @@ def make(job):
         }
     ranking = []
     angle_order = angles()
+    retry_file = root / "retry-source.json"
+    retry_source = jobdir(read(retry_file)["job"]) if retry_file.is_file() else None
     lora = setting("H3_LORA") or None
     triggers = ""
     if setting("AUTO_LORA") == "on" and "h3" in available:
@@ -94,7 +135,15 @@ def make(job):
         progress(f"Variant {vi + 1}/{brief.variants} · storyboard")
         angle = angle_order[vi % len(angle_order)]
         try:
-            story = plan(brief, angle, reference)
+            cached = (
+                interrupted_reviews(retry_source / folder.name) if retry_source else {}
+            )
+            if cached:
+                story = read(retry_source / folder.name / "story.json")
+                story["retry_source"] = retry_source.name
+                copyedit(story["shots"], brief.language)
+            else:
+                story = plan(brief, angle, reference)
         except Exception as exc:
             if not brief.revision:
                 raise
@@ -172,11 +221,28 @@ def make(job):
                     "seed": seed,
                     "prompt": prompt,
                 }
+                reuse = cached.get(si + 1) if not attempt else None
+                if reuse:
+                    previous, raw = reuse
+                    renderer, seed = previous["provider"], previous["seed"]
+                    event.update(
+                        provider=renderer,
+                        seed=seed,
+                        prompt=previous["prompt"],
+                        source_attempt=previous["attempt"],
+                        source_job=retry_source.name,
+                    )
                 events.append(event)
                 save(folder / "attempts.json", events)
                 try:
                     progress(f"Variant {vi + 1} · shot {si + 1} · {renderer}")
-                    if renderer == "footage":
+                    if reuse:
+                        progress(
+                            f"Variant {vi + 1} · rechecking existing shot {si + 1}"
+                        )
+                        clip = path / raw.name
+                        link_or_copy(raw, clip)
+                    elif renderer == "footage":
                         refdir = jobdir(brief.reference)
                         clip, source_time = cut(
                             refdir / "input.mp4",

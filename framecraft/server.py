@@ -141,9 +141,11 @@ def update_settings(values: dict[str, str]):
     return config.configure(values)
 
 
-def submit(kind, file, data):
+def submit(kind, file, data, *, retry_source=None):
     job = create_job(kind)
     save(jobdir(job) / file, data)
+    if retry_source:
+        save(jobdir(job) / "retry-source.json", {"job": retry_source})
     pool.submit(worker, job)
     return {"id": job}
 
@@ -285,7 +287,11 @@ def retry(job: str):
         "interrupted",
     ):
         raise ValueError("Only a stopped creative job can be retried")
-    return create(Brief.model_validate(read(jobdir(job) / "brief.json")))
+    brief = Brief.model_validate(read(jobdir(job) / "brief.json"))
+    if brief.revision:
+        revision_source(brief.revision.job, brief.revision.variant)
+        return submit("create", "brief.json", brief.model_dump(), retry_source=job)
+    return create(brief)
 
 
 class Metrics(BaseModel):
