@@ -132,6 +132,10 @@ To generate mouth motion from the recorded voice, set `presenter.opening` and `p
 
 A close-up of a round bottle can use its original printed label. Supply a clean front photograph on white to `python -m framecraft.bottle_asset front.jpg bottle.glb` and render a shallow front camera move with `framecraft.product_stage`. This reconstruction estimates the visible circular profile. It supports front views of approximately ±15 degrees. For a shot that must keep a package phrase legible, run `python -m framecraft.campaign_print front.jpg shot.mp4 print.json "SEA SALT"`. The report and frame ledger identify which frames reproduce the reference wording.
 
+For a small inscription on a curved surface, run `python -m framecraft.reference_detail product.jpg "Brand Name" depth-small.onnx detail.glb`. The tool locates the exact words in the catalog photograph, uses the local Depth Anything model to estimate the visible surface and maps the original lettering onto that surface. Use a shallow camera orbit over the photographed side. Check the encoded result with `campaign_print --start 16 --seconds 5` and the reference, video, report and phrase arguments shown above.
+
+An optional `required-print.json` array in a product directory binds these checks to gallery export. Each entry names the variant-relative `report`, expected `phrase`, `reference_sha256`, `start_frame`, `frames` and `minimum_fraction`. Export verifies the report against that edition's MP4 and the exact interval.
+
 ## Development
 
 ```sh

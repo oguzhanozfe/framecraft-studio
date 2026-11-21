@@ -262,6 +262,30 @@ def verify_edition(folder, detector, model_dir):
     return check
 
 
+def verified_print(work, video_sha256):
+    requirements = work.parent / "required-print.json"
+    if not requirements.is_file():
+        return True
+    for cue in read(requirements):
+        report = work / cue["report"]
+        if not report.is_file():
+            return False
+        audit = read(report)
+        frames = cue["frames"]
+        if not (
+            audit.get("passed")
+            and audit.get("video_sha256") == video_sha256
+            and audit.get("source_sha256") == cue["reference_sha256"]
+            and frames > 0
+            and audit.get("frames") == frames
+            and audit.get("start_frame") == cue["start_frame"]
+            and audit.get("matches", {}).get(cue["phrase"], 0) / frames
+            >= cue["minimum_fraction"]
+        ):
+            return False
+    return True
+
+
 def export(root, catalog, destination, *, ready_only=False):
     entries = []
     pairs = {}
@@ -270,6 +294,10 @@ def export(root, catalog, destination, *, ready_only=False):
         if ready_only and not (work / "delivery.json").is_file():
             continue
         rec = read(work / "delivery.json")
+        if not verified_print(work, rec["sha256"]):
+            if ready_only:
+                continue
+            raise ValueError(f"Final product label verification missing: {work}")
         revision = work.parent / "required-picture.json"
         if revision.is_file():
             approved = work.parent / read(revision)["report"]

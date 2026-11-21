@@ -8,6 +8,45 @@ from framecraft.campaign_experiments import assemble_voice, export, matrix
 from framecraft.core import save
 
 
+def test_print_receipt_is_bound_to_the_exact_file_source_and_interval(tmp_path):
+    from framecraft.campaign_experiments import verified_print
+    from framecraft.reference_detail import print_crop
+
+    work = tmp_path / "H1-C1"
+    work.mkdir()
+    cue = dict(
+        report="heel.json",
+        phrase="Brand",
+        reference_sha256="photo",
+        start_frame=480,
+        frames=150,
+        minimum_fraction=0.9,
+    )
+    receipt = dict(
+        passed=True,
+        video_sha256="master",
+        source_sha256="photo",
+        start_frame=480,
+        frames=150,
+        matches={"Brand": 150},
+    )
+    save(work.parent / "required-print.json", [cue])
+    assert not verified_print(work, "master")
+    save(work / "heel.json", receipt)
+    assert verified_print(work, "master")
+    assert not verified_print(work, "old-master")
+    for wrong in (
+        {"start_frame": 479},
+        {"source_sha256": "other"},
+        {"matches": {"Brand": 134}},
+    ):
+        save(work / "heel.json", {**receipt, **wrong})
+        assert not verified_print(work, "master")
+    left, top, right, bottom = print_crop((1000, 1500), (0.8, 0.5, 0.9, 0.55))
+    assert 0 <= left <= 1200 < 1350 <= right <= 1500
+    assert 0 <= top <= 500 < 550 <= bottom <= 1000
+
+
 def test_repeat_review_locates_both_copies_of_a_moving_sequence():
     from framecraft.campaign_motion import repeated_windows
 

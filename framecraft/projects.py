@@ -22,6 +22,8 @@ def project_folder(name):
     if not label or Path(label).is_reserved():
         raise ValueError("Choose a project name that can be used as a folder")
     root = projects_root()
+    root.mkdir(parents=True, exist_ok=True)
+    root = root.resolve(strict=True)
     folder = (root / label).resolve()
     if folder.parent != root:
         raise ValueError("Invalid project folder")
