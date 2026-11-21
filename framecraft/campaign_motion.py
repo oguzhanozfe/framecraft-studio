@@ -324,7 +324,17 @@ def render(recipe, folder):
                 raise ValueError("horizontal_focus must be in [0,1]")
             if shot.get("framing") == "contain":
                 scale = "scale=1080:1320:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(1320-ih)/2+95:color=0x10151B"
+                with av.open(str(folder / shot["file"])) as src:
+                    stream = src.streams.video[0]
+                    factor = min(1080 / stream.width, 1320 / stream.height)
+                    width, height = (
+                        round(stream.width * factor),
+                        round(stream.height * factor),
+                    )
+                left, top = (1080 - width) // 2, (1320 - height) // 2 + 95
+                motion_box = [left, top, left + width, top + height]
             else:
+                motion_box = [0, 150, 1080, 1270]
                 scale = f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*{framing}:(ih-oh)/2"
             vf = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},{scale},setsar=1[base];"
             inset = shot.get("inset")
@@ -395,6 +405,7 @@ def render(recipe, folder):
                     "from": index,
                     "to": index + frames,
                     "plate": overlay.name,
+                    "motion_box": motion_box,
                     "lines": lines,
                     "source": shot["file"],
                     "source_start_seconds": shot.get("start", 0),
@@ -530,7 +541,9 @@ def audit(path, folder, cues, recipe):
                 if score < 0.86 or coverage < 0.90:
                     flags.add("text")
                 observed.append([readback, round(score, 3), round(coverage, 3)])
-            thumb = background_key(img[150:1270])
+            # Exclude the static canvas surrounding a contained phone or gameplay frame.
+            x0, y0, x1, y1 = cue.get("motion_box", [0, 150, 1080, 1270])
+            thumb = background_key(img[y0:y1, x0:x1])
             if last is not None:
                 near = near + 1 if np.mean(cv2.absdiff(thumb, last)) < 0.18 else 0
                 if near >= FPS // 2:

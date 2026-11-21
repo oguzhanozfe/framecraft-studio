@@ -26,6 +26,16 @@
             Ürünü, kime seslendiğini ve izleyiciden beklediğin hareketi anlat.
           </p>
         </div>
+        <form id="productForm" class="card">
+          <label for="productSource">Amazon Türkiye ürünü veya App Store oyunu</label>
+          <input type="url" id="productSource" name="url" required placeholder="Ürün bağlantısını yapıştır" />
+          <details><summary>Proje, kitle ve yaratıcı yön</summary>
+            <label>Proje adı<input name="project" maxlength="72" /></label>
+            <label>Kime hitap ediyor?<input name="audience" maxlength="400" /></label>
+            <label>İzleyicide uyandırmak istediğin istek<textarea name="angle" maxlength="1500"></textarea></label>
+          </details>
+          <button type="submit">30 saniyelik sessiz UGC üret</button>
+        </form>
         <form id="briefForm" class="card">
           <label for="projectName">Proje adı</label>
           <input id="projectName" name="project" maxlength="72" placeholder="ASUS Dual RTX 5070 OC" />

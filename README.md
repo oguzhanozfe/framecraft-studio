@@ -78,6 +78,8 @@ Poll `GET /api/jobs/{id}` for progress, analysis, ranking, artifact paths and de
 
 ## Thirty-second Turkish campaigns
 
+Paste an Amazon Türkiye product URL or an Apple App Store game URL into the first form in Studio. A product name, audience or creative direction can be supplied when known. The local director reads the listing and returns an audience, an ownership desire, an opening action and a visible product proof. The worker renders the shots, checks the edit and saves the silent winner in the project library. The same flow is available through `POST /api/campaign` with a JSON `url` and the local `X-Framecraft: 1` header. Store lookup requires internet access.
+
 Studio groups saved videos in **Projeler**. Give a brief a project name to keep revisions together. A completed iteration is stored at `FRAMECRAFT_HOME/projects/Project Name/Project Name - UGC 001/Project Name - UGC 001.mp4`. Open `projects/index.html` for an offline library. The same video in the same project keeps its iteration number on retry.
 
 The Studio form starts with silent video selected. For a silent campaign, set `silent: true` on the item or motion recipe. The campaign skips voice and music generation, drops source sound and checks that the final MP4 contains zero audio streams. Use `layout: "caption"` for restrained on-screen copy.

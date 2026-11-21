@@ -161,9 +161,9 @@ def generate(
     reference=None,
     front=False,
 ):
-    if reference is not None and name != "h3":
+    if reference is not None and name not in {"h3", "ltx"}:
         raise ValueError(
-            "Reference-conditioned campaign shots require the H3 ComfyUI graph"
+            "Reference-conditioned campaign shots require H3 or LTX ComfyUI"
         )
     width, height = SIZES[shape]
     if name == "standalone":
@@ -253,7 +253,36 @@ def generate(
                 filter(None, (upload.get("subfolder"), upload["name"]))
             )
             g["17"] = {"class_type": "LoadImage", "inputs": {"image": name_in_comfy}}
-            g["6"]["inputs"]["first_frame"] = ["17", 0]
+            if name == "h3":
+                g["6"]["inputs"]["first_frame"] = ["17", 0]
+            else:
+                # The LTX 2.5 guide node returns a stage-one lattice at half the requested dimensions.
+                g["18"] = {
+                    "class_type": "LTXV25ImgToVideo",
+                    "inputs": {
+                        "model": ["1", 0],
+                        "clip": ["1", 1],
+                        "vae": ["1", 2],
+                        "audio_vae": ["1", 3],
+                        "mode": "i2v",
+                        "images": ["17", 0],
+                        "prompt": prompt,
+                        "negative_prompt": g["3"]["inputs"]["text"],
+                        "width": 2 * width,
+                        "height": 2 * height,
+                        "frame_rate": 24.0,
+                        "length": frames,
+                        "batch_size": 1,
+                        "image_strength": 0.85,
+                        "img_compression": 18,
+                    },
+                }
+                g["6"]["inputs"].update(
+                    model=["18", 0],
+                    positive=["18", 1],
+                    negative=["18", 2],
+                    latent_image=["18", 3],
+                )
         monitor = PreviewMonitor(comfy(), token, target.parent)
         try:
             resp = client.post(

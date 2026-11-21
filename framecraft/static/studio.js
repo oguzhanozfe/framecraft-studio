@@ -81,6 +81,7 @@ async function form(formId, fn) {
     }
   });
 }
+form("#productForm", async (f) => goJob(await api("/api/campaign","POST",Object.fromEntries(f))));
 form("#briefForm", async (f) => {
   let b = Object.fromEntries(f);
   b.silent = f.has("silent");

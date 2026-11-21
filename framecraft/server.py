@@ -17,6 +17,7 @@ from .compare import Comparison, compare, resolve
 from .core import Brief, Revision, create_job, home, jobdir, query, read, record, save
 from .pipeline import analyze_job, make
 from .providers import inventory
+from .product_link import ProductLink
 
 pool = ThreadPoolExecutor(max_workers=1)
 static = Path(__file__).with_name("static")
@@ -34,6 +35,10 @@ def worker(job):
     try:
         if kind == "create":
             make(job)
+        elif kind == "campaign":
+            from .product_link import produce_link
+
+            produce_link(job)
         elif kind == "compare":
             compare(job)
         elif kind == "reference":
@@ -172,6 +177,11 @@ def submit(kind, file, data, *, retry_source=None):
         save(jobdir(job) / "retry-source.json", {"job": retry_source})
     pool.submit(worker, job)
     return {"id": job}
+
+
+@app.post("/api/campaign", status_code=202)
+def campaign(request: ProductLink):
+    return submit("campaign", "listing.json", request.model_dump())
 
 
 @app.post("/api/create", status_code=202)
