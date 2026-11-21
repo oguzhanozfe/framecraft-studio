@@ -294,6 +294,44 @@ def test_text_zone_and_spelling():
     assert text_checks(lines, "", "raw") == ["unplanned_text"]
 
 
+def test_director_retries_unsupported_local_options_with_schema(monkeypatch):
+    import httpx
+
+    from framecraft import director
+
+    requests = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(422)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"visual":"A round blue ball"}'}}]
+            },
+        )
+
+    client = httpx.Client
+    monkeypatch.setenv("FRAMECRAFT_LLM_MODEL", "example")
+    monkeypatch.setenv("FRAMECRAFT_LLM_URL", "http://127.0.0.1:1234/v1")
+    monkeypatch.setattr(
+        director.httpx,
+        "Client",
+        lambda **kwargs: client(**kwargs, transport=httpx.MockTransport(handle)),
+    )
+    assert (
+        director.ask(director.NewVisual, "Write a prompt", {}).visual
+        == "A round blue ball"
+    )
+    assert (
+        requests[0]["reasoning_effort"] == "none"
+        and "chat_template_kwargs" not in requests[1]
+    )
+    assert requests[0]["response_format"] == requests[1]["response_format"]
+
+
 def test_two_bad_attempts_never_promote(tmp_path, monkeypatch):
     j = create_job("create")
     save(

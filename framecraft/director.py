@@ -2,6 +2,7 @@ import base64
 import io
 import json
 from typing import Literal
+from urllib.parse import urlsplit
 
 import cv2
 import httpx
@@ -195,8 +196,9 @@ def ask(schema, instruction, payload, picture=None):
             "temperature": 0.45,
             "max_tokens": 1400,
         }
-        if "127.0.0.1" in base or "localhost" in base:
+        if urlsplit(base).hostname in ("127.0.0.1", "localhost", "::1"):
             request["chat_template_kwargs"] = {"enable_thinking": False}
+            request["reasoning_effort"] = "none"
         request["response_format"] = {
             "type": "json_schema",
             "json_schema": {
@@ -206,6 +208,10 @@ def ask(schema, instruction, payload, picture=None):
         }
         for attempt in range(2):
             response = client.post("chat/completions", json=request)
+            if response.status_code in (400, 422) and "reasoning_effort" in request:
+                request.pop("reasoning_effort")
+                request.pop("chat_template_kwargs", None)
+                response = client.post("chat/completions", json=request)
             if response.status_code in (400, 422) and "response_format" in request:
                 request.pop("response_format")
                 response = client.post("chat/completions", json=request)
