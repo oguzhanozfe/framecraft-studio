@@ -206,8 +206,13 @@ def revision_plan(brief, angle):
                 CopyDeck,
                 "Copyedit these captions for native grammar, idiom and spelling in the requested language. "
                 "Return exactly one succinct, complete caption per shot in order. Preserve the offer and meaning. "
+                "Preserve the actual product name using the visible scene for disambiguation. "
                 "Avoid repetition, sentence fragments that depend on a different caption, and new claims.",
-                {"language": brief.language, "captions": [s["caption"] for s in shots]},
+                {
+                    "language": brief.language,
+                    "captions": [s["caption"] for s in shots],
+                    "subjects": [s["visual"] for s in shots],
+                },
             )
             if len(copy.captions) != len(shots):
                 raise ValueError("Copy editor returned an incorrect caption count")
@@ -215,6 +220,10 @@ def revision_plan(brief, angle):
                 shot["caption"] = caption
             return {
                 "director": "vision and language models",
+                "text_model": setting("LLM_MODEL") or "automatic discovery",
+                "vision_model": setting("VISION_MODEL")
+                or setting("LLM_MODEL")
+                or "automatic discovery",
                 "angle": angle,
                 **result.model_dump(),
                 "shots": shots,
