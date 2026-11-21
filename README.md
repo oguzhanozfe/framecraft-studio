@@ -140,6 +140,8 @@ For a small inscription on a curved surface, run `python -m framecraft.reference
 
 An optional `required-print.json` array in a product directory binds these checks to gallery export. Each entry names the variant-relative `report`, expected `phrase`, `reference_sha256`, `start_frame`, `frames` and `minimum_fraction`. Export verifies the report against that edition's MP4 and the exact interval.
 
+For a material close-up, run `python -m framecraft.campaign_detailqa detail.mp4 detail.json review.json --source-facts source.json --model VISION_MODEL` with the mesh receipt from `reference_detail`. The checker follows matching features from the original photograph across every video frame. The visual reviewer compares the same part of the product at a similar scale and checks it against the catalog description. A product-level `required-picture.json` can point to an approved master report via its `report` field to prevent previous source cuts from replacing the selected edit.
+
 ## Development
 
 ```sh

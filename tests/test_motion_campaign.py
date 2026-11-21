@@ -4,6 +4,50 @@ import pytest
 from framecraft.campaign_motion import render, repeated_motion, spans
 
 
+def test_fabric_audit_requires_actual_matching_details_in_the_video(
+    tmp_path, monkeypatch
+):
+    import cv2
+    from framecraft import campaign_detailqa as qa
+    from framecraft.core import save
+
+    rng = np.random.default_rng(21)
+    texture = rng.integers(0, 256, (240, 160, 3), dtype=np.uint8)
+    photo = tmp_path / "item.png"
+    cv2.imwrite(str(photo), texture)
+    receipt = tmp_path / "mesh.json"
+    save(
+        receipt,
+        {
+            "kind": "visible_surface_relief",
+            "source": str(photo),
+            "source_sha256": qa.fingerprint(photo),
+            "pixel_crop": [0, 0, 160, 240],
+        },
+    )
+    monkeypatch.setattr(
+        qa,
+        "ask",
+        lambda schema, *args, **kwargs: schema(
+            defect="none", observation="The region was inspected", location=""
+        ),
+    )
+    for name, frame, expected in (
+        ("source", texture, True),
+        ("unrelated", np.zeros_like(texture), False),
+    ):
+        video = tmp_path / (name + ".mp4")
+        writer = cv2.VideoWriter(
+            str(video), cv2.VideoWriter_fourcc(*"mp4v"), 24, (160, 240)
+        )
+        for _ in range(6):
+            writer.write(frame)
+        writer.release()
+        result = qa.check_region(video, receipt, tmp_path / (name + ".json"))
+        assert result["passed"] is expected
+        assert result["matched_frames"] == (6 if expected else 0)
+
+
 def test_anatomy_confirmation_receives_only_decoded_video_frames(tmp_path, monkeypatch):
     import cv2
     from framecraft import motion_review

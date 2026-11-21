@@ -85,6 +85,15 @@ def talking_take(folder, key):
     return path, check
 
 
+def selected_picture(folder, sha256):
+    revision = folder / "required-picture.json"
+    if not revision.is_file():
+        return True
+    approved = folder / read(revision)["report"]
+    picture = read(approved) if approved.is_file() else {}
+    return bool(picture.get("passed") and sha256 and picture.get("sha256") == sha256)
+
+
 def edition(root, product, hook, cta):
     from .campaign_motion import render
 
@@ -96,6 +105,10 @@ def edition(root, product, hook, cta):
     with FileLock(str(out / ".lock")):
         base = (root / product["base"]).resolve()
         spec, original = verified_master(base)
+        if not selected_picture(folder, original["sha256"]):
+            raise ValueError(
+                f"Source picture is awaiting approval or has been superseded: {base}"
+            )
         lines = read(folder / "final-copy.json")
         key1, key2 = f"hook{hook}", f"cta{cta}"
         opening, first = talking_take(speech, key1)
@@ -192,6 +205,8 @@ def edition(root, product, hook, cta):
         }
         save(out / "motion.json", recipe)
         video = render(recipe, out)
+        if not selected_picture(folder, original["sha256"]):
+            raise ValueError(f"Source picture changed during rendering: {base}")
         quality = read(out / "motion-assessment.json")
         if (
             not quality["passed"]
@@ -300,15 +315,13 @@ def export(root, catalog, destination, *, ready_only=False):
             raise ValueError(f"Final product label verification missing: {work}")
         revision = work.parent / "required-picture.json"
         if revision.is_file():
-            approved = work.parent / read(revision)["report"]
             audit = work / "motion-assessment.json"
-            picture = read(approved) if approved.is_file() else {}
             used = (
                 read(audit).get("experiment", {}).get("source_picture_sha256")
                 if audit.is_file()
                 else None
             )
-            if not picture.get("passed") or used != picture["sha256"]:
+            if not selected_picture(work.parent, used):
                 if ready_only:
                     continue
                 raise ValueError(f"Pending revised product picture: {work}")

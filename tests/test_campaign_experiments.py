@@ -8,6 +8,25 @@ from framecraft.campaign_experiments import assemble_voice, export, matrix
 from framecraft.core import save
 
 
+def test_superseded_source_cannot_replace_an_accepted_edit(tmp_path, monkeypatch):
+    from framecraft import campaign_experiments as experiment
+
+    root = tmp_path / "item"
+    work = root / "H1-C1"
+    work.mkdir(parents=True)
+    save(root / "required-picture.json", {"report": "approved.json"})
+    save(root / "approved.json", {"passed": True, "sha256": "current"})
+    save(work / "delivery.json", {"sha256": "reviewed-file"})
+    monkeypatch.setattr(
+        experiment, "verified_master", lambda path: ({}, {"sha256": "old"})
+    )
+    with pytest.raises(ValueError, match="superseded"):
+        experiment.edition(tmp_path, {"slug": "item", "base": "old/motion.json"}, 0, 0)
+    from framecraft.core import read
+
+    assert read(work / "delivery.json") == {"sha256": "reviewed-file"}
+
+
 def test_reattached_product_take_keeps_its_review_and_adjudicates_once(
     tmp_path, monkeypatch
 ):
