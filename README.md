@@ -128,6 +128,8 @@ To generate mouth motion from the recorded voice, set `presenter.opening` and `p
 2. In the lip-sync environment, install `python_speech_features` and supply the local YuNet detector and a directory containing `SyncNetModel.py` and `syncnet_v2.model`. Run `python -m framecraft.campaign_experiments experiments.json --verify-lips yunet.onnx SYNCNET_DIR` to check the final opening and closing against the timed voice. Each report records the measured offset, confidence and face visibility. [SyncNet source and weights](https://github.com/joonson/syncnet_python)
 3. Run `python -m framecraft.campaign_experiments experiments.json --export gallery` to package the MP4s, comparison page, CSV and manifest. Add `--ready-only` to review completed pairs during a run.
 
+To check that a pair plays alike up to its closing, run `python -m framecraft.campaign_pairqa A.mp4 B.mp4 FIRST_CLOSING_FRAME pair.json`. The report measures frame differences, mixed-audio correlation and level drift before the closing, and checks for a visible change during the closing.
+
 ### Product print
 
 A close-up of a round bottle can use its original printed label. Supply a clean front photograph on white to `python -m framecraft.bottle_asset front.jpg bottle.glb` and render a shallow front camera move with `framecraft.product_stage`. This reconstruction estimates the visible circular profile. It supports front views of approximately ±15 degrees. For a shot that must keep a package phrase legible, run `python -m framecraft.campaign_print front.jpg shot.mp4 print.json "SEA SALT"`. The report and frame ledger identify which frames reproduce the reference wording.

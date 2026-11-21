@@ -8,6 +8,24 @@ from framecraft.campaign_experiments import assemble_voice, export, matrix
 from framecraft.core import save
 
 
+def test_decode_comparison_catches_an_uncontrolled_picture_change(
+    tmp_path, monkeypatch
+):
+    from framecraft import campaign_pairqa as qa
+
+    files = [tmp_path / n for n in ("a.mp4", "b.mp4")]
+    for file in files:
+        file.write_bytes(file.name.encode())
+    first = np.zeros((3, 8), np.uint8)
+    second = first.copy()
+    second[-1] = 10
+    monkeypatch.setattr(qa, "picture", lambda f: first if f == files[0] else second)
+    monkeypatch.setattr(qa, "sound", lambda f: np.ones(8000, np.float32))
+    assert qa.compare(*files, 2, tmp_path / "one.json")["passed"]
+    second[0] = 10
+    assert not qa.compare(*files, 2, tmp_path / "two.json")["passed"]
+
+
 def test_print_receipt_is_bound_to_the_exact_file_source_and_interval(tmp_path):
     from framecraft.campaign_experiments import verified_print
     from framecraft.reference_detail import print_crop
