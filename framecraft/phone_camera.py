@@ -8,7 +8,7 @@ import secrets
 
 import cv2
 from filelock import FileLock
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .core import read, save
 from .director import CreativeIntent, ask
@@ -19,6 +19,17 @@ class CameraBeat(BaseModel):
     action: str = Field(min_length=30, max_length=800)
     headline: str = Field(min_length=2, max_length=50)
     narration: str = Field(min_length=10, max_length=160)
+
+    @field_validator("narration")
+    @classmethod
+    def grounded(cls, line):
+        from .motion_copy import unsupported_testimony
+
+        if unsupported_testimony(line):
+            raise ValueError(
+                "Use an independently sourced fact or a preference instead of an invented test or universal claim"
+            )
+        return line
 
 
 class CameraPlan(BaseModel):
@@ -129,6 +140,10 @@ def film(plan, root):
             tail_anchor(
                 root / previous["file"], previous["start"] + previous["seconds"], anchor
             )
+        closing = None
+        if provider == "h3" and shots and index == len(plan["shots"]):
+            closing = folder / "return-to-creator.png"
+            tail_anchor(root / shots[0]["file"], 0.5, closing)
         prompt = (
             "One camera, the adult creator's own vertical phone. Continuous real-time footage with imperfect wrist-held framing. "
             "The view moves only where that same phone physically goes. No second camera, jump cuts, graphic overlays or transitions. "
@@ -140,6 +155,7 @@ def film(plan, root):
         signature = hashlib.sha256(
             json.dumps([provider, prompt, seconds]).encode()
             + (anchor.read_bytes() if anchor else b"")
+            + (closing.read_bytes() if closing else b"")
         ).hexdigest()
         receipt, target = folder / "take.json", folder / "take.mp4"
         if not (
@@ -158,6 +174,7 @@ def film(plan, root):
                 lambda x: print(x, flush=True),
                 frames=seconds * 24 + 1,
                 reference=anchor,
+                end_reference=closing,
                 front=bool(plan.get("priority")),
             )
             tmp.replace(target)
@@ -182,6 +199,7 @@ def film(plan, root):
             seconds,
             plan.get("setting", ""),
             incoming=anchor,
+            outgoing=closing,
             model=plan.get("vision_model"),
             provider=provider,
             front=bool(plan.get("priority")),

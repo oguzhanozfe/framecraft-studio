@@ -3,6 +3,7 @@
 import hashlib
 from pathlib import Path
 import secrets
+import subprocess
 
 import cv2
 import numpy as np
@@ -63,6 +64,112 @@ def inspect(path, model=None):
     return value
 
 
+def patch_roll(path, report, setting, model, front=False):
+    """Reshoot an interior roll between two upright frames, keeping the other action."""
+    bad = sorted(set(report["sideways_tiles"] + report["impossible_anatomy_tiles"]))
+    if not bad or min(bad) < 3 or max(bad) > 6:
+        return None
+    cap = cv2.VideoCapture(str(path))
+    try:
+        fps = round(cap.get(cv2.CAP_PROP_FPS))
+        total = round(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if fps != 24 or total < 48:
+            return None
+        positions = np.rint(np.linspace(0.03, 0.95, 8) * (total - 1)).astype(int)
+        left, right = int(positions[min(bad) - 3]), int(positions[max(bad) + 1])
+        anchors = []
+        for pos in (left, right):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+            ok, image = cap.read()
+            target = path.with_name(f"{path.stem}-anchor-{pos}.png")
+            if not ok or not cv2.imwrite(str(target), image):
+                raise ValueError("Missing anchor at a reported camera roll")
+            anchors.append(target)
+    finally:
+        cap.release()
+    output = path.with_name(path.stem + "-joined.mp4")
+    receipt = output.with_suffix(".json")
+    if not (
+        output.is_file()
+        and receipt.is_file()
+        and read(receipt).get("input") == report["signature"]
+    ):
+        replacement = path.with_name(path.stem + "-bridge.mp4")
+        seed = secrets.randbelow(2**31 - 1)
+        prompt = (
+            setting
+            + " Match the two supplied frames with a single steady upright portrait phone recording. "
+            "A modest sideways shift of the operator's wrist, a breath, a change of gaze. "
+            "Keep gravity vertical, geometry rigid and the horizon level through the entire move. One person, one handset."
+        )
+        generate(
+            "h3",
+            prompt,
+            seed,
+            "vertical",
+            replacement,
+            lambda s: print(s, flush=True),
+            frames=right - left + 1,
+            reference=anchors[0],
+            end_reference=anchors[1],
+            front=front,
+        )
+        bridge = cv2.VideoCapture(str(replacement))
+        try:
+            size = int(bridge.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            bridge.release()
+        if size < 2:
+            raise ValueError("Empty phone-camera repair")
+        # Address the generated frames by normalized time; H3 rounds native clip lengths.
+        count = right - left + 1
+        filters = (
+            f"[0:v]split=2[a][b];[a]trim=end_frame={left},setpts=PTS-STARTPTS[before];"
+            f"[1:v]setpts=(PTS-STARTPTS)*{count - 1}/{size - 1},fps={fps}:round=near,tpad=stop_mode=clone:stop=1,trim=end_frame={count},setpts=PTS-STARTPTS[fix];"
+            f"[b]trim=start_frame={right + 1},setpts=PTS-STARTPTS[after];"
+            f"[before][fix][after]concat=n=3:v=1:a=0,setsar=1[v]"
+        )
+        tmp = output.with_suffix(".partial.mp4")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(path),
+                "-i",
+                str(replacement),
+                "-filter_complex",
+                filters,
+                "-map",
+                "[v]",
+                "-an",
+                "-frames:v",
+                str(total),
+                "-c:v",
+                "libx264",
+                "-crf",
+                "15",
+                "-preset",
+                "veryfast",
+                str(tmp),
+            ],
+            check=True,
+        )
+        tmp.replace(output)
+        save(
+            receipt,
+            {
+                "input": report["signature"],
+                "replaced_frames": [left, right],
+                "seed": seed,
+            },
+        )
+    return output if inspect(output, model)["passed"] else None
+
+
 def repair(
     path,
     seconds,
@@ -80,6 +187,12 @@ def repair(
     if report["passed"]:
         return path
     for attempt in range(1, 3):
+        if provider == "h3":
+            fixed = patch_roll(
+                path if attempt == 1 else target, report, setting, model, front
+            )
+            if fixed:
+                return fixed
         target = path.with_name(f"{path.stem}-repair-{attempt}.mp4")
         prompt = f"{setting} {action}. One physically continuous upright portrait phone recording. Keep the doorframe vertical, image level and just one adult operator; no camera roll or clones. Make a natural small step to reframe at the wrist. Preserve the room and camera direction. {report['observation'][:240]} was the rejected take; correct only its visible filming defects."
         signature = hashlib.sha256(

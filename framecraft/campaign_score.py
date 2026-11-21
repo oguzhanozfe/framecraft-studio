@@ -67,7 +67,9 @@ def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
         if res.is_error:
             raise RuntimeError(res.text[:1600])
         pid = res.json()["prompt_id"]
-        for _ in range(600):
+        # A soundtrack can queue behind several long video generations on one GPU.
+        deadline = time.monotonic() + 3600
+        while time.monotonic() < deadline:
             data = client.get("/history/" + pid).raise_for_status().json().get(pid)
             if data:
                 if data.get("status", {}).get("status_str") == "error":
@@ -85,7 +87,9 @@ def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
                     "/view",
                     params={k: record[k] for k in ("filename", "type", "subfolder")},
                 ).raise_for_status()
-                target.write_bytes(response.content)
+                temporary = target.with_name(target.name + "." + token + ".partial")
+                temporary.write_bytes(response.content)
+                temporary.replace(target)
                 save(
                     target.with_suffix(".json"),
                     {
@@ -99,7 +103,7 @@ def compose(tags, target, *, seed=1975, seconds=32, bpm=104):
                 )
                 return target
             time.sleep(2)
-    raise TimeoutError("ACE-Step score generation exceeded twenty minutes")
+    raise TimeoutError(f"ACE-Step job {pid} exceeded one hour including queue time")
 
 
 if __name__ == "__main__":

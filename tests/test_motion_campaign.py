@@ -17,6 +17,48 @@ def test_voice_alignment_catches_a_delayed_right_channel_and_echo():
     assert not compare(voice, mix + 0.65 * delayed[:, None])["passed"]
 
 
+def test_camera_roll_reshoots_only_the_marked_interior(tmp_path, monkeypatch):
+    import cv2
+    from framecraft import phone_review
+    from framecraft.core import read
+
+    original = tmp_path / "take.mp4"
+
+    def make_clip(path, frames):
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), 24, (96, 160)
+        )
+        for f in range(frames):
+            writer.write(np.full((160, 96, 3), 25 + f % 174, np.uint8))
+        writer.release()
+
+    make_clip(original, 120)
+    calls = []
+
+    def guided(provider, prompt, seed, shape, target, progress, **opts):
+        calls.append(opts)
+        make_clip(target, opts["frames"] + 5)
+
+    monkeypatch.setattr(phone_review, "generate", guided)
+    monkeypatch.setattr(phone_review, "inspect", lambda *args: {"passed": True})
+    report = {
+        "signature": "fixture",
+        "sideways_tiles": [5],
+        "impossible_anatomy_tiles": [],
+    }
+    fixed = phone_review.patch_roll(original, report, "A phone on a desk", None)
+    assert calls[0]["reference"].is_file() and calls[0]["end_reference"].is_file()
+    left, right = read(fixed.with_suffix(".json"))["replaced_frames"]
+    assert 0 < left < right < 119
+    cap = cv2.VideoCapture(str(fixed))
+    try:
+        assert round(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 120
+    finally:
+        cap.release()
+    assert phone_review.patch_roll(original, report, "A phone on a desk", None) == fixed
+    assert len(calls) == 1
+
+
 def test_short_source_and_reused_interval_fail_before_encoding(tmp_path):
     src = tmp_path / "scene.mp4"
     subprocess.run(

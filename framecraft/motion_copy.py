@@ -28,6 +28,17 @@ class Selection(BaseModel):
     indices: list[int]
 
 
+def unsupported_testimony(line):
+    return bool(
+        re.search(
+            r"\b(?:denedim|satın aldım|kullandım|yakaladım|sıktım|kullanıyorum|testi tamamladım|test ettim|verim aldım|ölçtüm|bana uzun süre yeter|tenimde)\b"
+            r"|\bher şeyi (?:taşıyor|hallediyor|çalıştırıyor)\b",
+            line,
+            re.I,
+        )
+    )
+
+
 def select_grounded_read(brief):
     banks = brief["spoken_beats"]
     choice = ask(
@@ -107,15 +118,9 @@ def make_voice(folder, brief):
             {"options": options, "verdict": verdict.model_dump()},
         )
         problems = [f"{f.quotation}: {f.reason}" for f in findings]
-        first_person = re.search(
-            r"\b(?:denedim|satın aldım|kullandım|yakaladım|sıktım|kullanıyorum|bana uzun süre yeter|tenimde)\b",
-            selected,
-            re.I,
-        )
-        if first_person:
+        if unsupported_testimony(selected):
             problems.append(
-                "Rewrite actual personal ownership or use as an invitation: "
-                + first_person.group()
+                "Remove invented personal ownership, claims of running the test, and universal product promises."
             )
         if len(selected.split()) < 36:
             problems.append(

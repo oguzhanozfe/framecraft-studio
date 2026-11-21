@@ -22,8 +22,15 @@ def canonical(text, pronunciation):
 
 
 def produce(brief, folder, asr):
+    from .motion_copy import unsupported_testimony
+
     pronunciations = brief.get("pronunciation", {})
-    banks = brief["spoken_beats"]
+    banks = [
+        [line for line in bank if not unsupported_testimony(line)]
+        for bank in brief["spoken_beats"]
+    ]
+    if not all(banks):
+        raise ValueError("No grounded narration left for a spoken beat")
     alternatives = [canonical(line, pronunciations) for bank in banks for line in bank]
     weights = os.getenv("FRAMECRAFT_FREYA_MODEL", "freyavoice/Freya-TTS")
     python = os.getenv("FRAMECRAFT_VOICE_PYTHON", sys.executable)
