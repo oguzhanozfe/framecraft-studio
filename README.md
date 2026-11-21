@@ -4,7 +4,7 @@ Local creative production for short-form video. Give Studio a brief or upload a 
 
 ![Four frames of a locally generated puzzle creative with typeset Turkish captions](docs/puzzle-example.webp)
 
-[Türkçe başlangıç rehberi](docs/baslangic.md) · [Research and evaluation](docs/research.md)
+[Türkçe başlangıç rehberi](docs/baslangic.md) · [Research and evaluation](docs/research.md) · [RTX 3090 example](docs/rtx-3090-evaluation.md)
 
 ## Start the studio
 

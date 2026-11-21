@@ -324,7 +324,13 @@ async function jobView(id) {
                 : "") +
               "<p>" +
               esc(x.reasons.join(", ")) +
-              "</p></article>",
+              "</p>" +
+              (j.assets.includes("v" + x.variant + "/critique.json")
+                ? '<details data-review="' +
+                  x.variant +
+                  '"><summary>Değerlendirme gerekçesi</summary><div></div></details>'
+                : "") +
+              "</article>",
           )
           .join("") +
         "</div>"
@@ -388,6 +394,21 @@ async function jobView(id) {
       )
       .join("") +
     "</details>";
+  for (const panel of body.querySelectorAll("details[data-review]")) {
+    panel.ontoggle = async () => {
+      if (!panel.open || panel.dataset.loaded) return;
+      try {
+        const model = await get("v" + panel.dataset.review + "/critique.json");
+        panel.querySelector("div").innerHTML =
+          (model.status === "assessed"
+            ? "<p>Brief uyumu · " + esc(model.brief_fit) + "/100</p>"
+            : "") + review(model);
+        panel.dataset.loaded = "1";
+      } catch (err) {
+        note(err.message);
+      }
+    };
+  }
   if ($("#frameChecks")) {
     const box = $("#frameChecks");
     box.innerHTML =

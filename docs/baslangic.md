@@ -13,4 +13,3 @@ Windows’ta Python 3.11 veya üstü ve FFmpeg kurulu olmalı. Repoyu indir, kla
 **Yazı denetimi.** Model sahne görüntüsünü üretir. Stüdyo gerçek fontla yazıyı ekler. OCR’ın okuduklarını beklenen yazıyla karşılaştırır ve ekrandaki harf piksellerini baskı kalıbıyla denetler. Başarısız yazı denetimi ikinci bir kurgu denemesini tetikler. Kaynak video yüklendiğinde amaçlanan yazı bilinmiyorsa OCR yalnızca görünen metni ve konumunu raporlar.
 
 **Üretim sırasında müdahale.** Destekleyen ComfyUI modelleri ara örnekleme görüntülerini gönderir. Art arda iki geç önizlemede ciddi pozlama kusuru veya güçlü bir beklenmeyen yazı sinyali varsa ilgili iş durdurulabilir. Nihai kareler çözüldükten sonra her plan ayrıca tam denetimden geçer. Görsel model, kurgu amacı ve anatomi gibi konuları seçilmiş ana karelerde değerlendirir.
-
