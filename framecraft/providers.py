@@ -98,7 +98,7 @@ def inventory():
         )
     }
     choices = []
-    for name in ("h3", "ltx", "standalone"):
+    for name in ("h3", "ltx", "wan", "standalone"):
         if name == "standalone":
             exe, paths = standalone_paths()
             absent = [p.name for p in paths.values() if not p.is_file()]
@@ -106,10 +106,10 @@ def inventory():
                 absent.append("sd-cli")
         else:
             absent = missing(template(name), info) if info else ["ComfyUI offline"]
-        recommended = 12 if name == "standalone" else 24
+        recommended = {"standalone": 12, "wan": 8}.get(name, 24)
         fit = (gb or 0) >= recommended
         measured = stats.get(name, {})
-        prior = 82 if name == "h3" else (78 if name == "ltx" else 73)
+        prior = {"h3": 82, "ltx": 78, "wan": 76, "standalone": 73}[name]
         rating = (
             prior
             if not measured
@@ -161,9 +161,9 @@ def generate(
     reference=None,
     front=False,
 ):
-    if reference is not None and name not in {"h3", "ltx"}:
+    if reference is not None and name not in {"h3", "ltx", "wan"}:
         raise ValueError(
-            "Reference-conditioned campaign shots require H3 or LTX ComfyUI"
+            "Reference-conditioned campaign shots require H3, LTX or Wan in ComfyUI"
         )
     width, height = SIZES[shape]
     if name == "standalone":
@@ -225,6 +225,10 @@ def generate(
             }
             for key in ("7", "8"):
                 g[key]["inputs"]["model"] = ["16", 0]
+    elif name == "wan":
+        g["4"]["inputs"]["text"] = prompt
+        g["6"]["inputs"].update(width=width, height=height, length=frames)
+        g["8"]["inputs"]["seed"] = seed
     else:
         g["2"]["inputs"]["text"] = prompt
         g["3"]["inputs"]["text"] = (
@@ -232,7 +236,7 @@ def generate(
         )
         g["5"]["inputs"].update(width=width, height=height, length=frames)
         g["6"]["inputs"]["seed"] = seed
-    output = "15" if name == "h3" else "8"
+    output = {"h3": "15", "ltx": "8", "wan": "11"}[name]
     token = uuid.uuid4().hex
     g[output]["inputs"]["filename_prefix"] = "video/framecraft-" + token
     with httpx.Client(base_url=comfy(), timeout=35) as client:
@@ -255,6 +259,8 @@ def generate(
             g["17"] = {"class_type": "LoadImage", "inputs": {"image": name_in_comfy}}
             if name == "h3":
                 g["6"]["inputs"]["first_frame"] = ["17", 0]
+            elif name == "wan":
+                g["6"]["inputs"]["start_image"] = ["17", 0]
             else:
                 # The LTX 2.5 guide node returns a stage-one lattice at half the requested dimensions.
                 g["18"] = {

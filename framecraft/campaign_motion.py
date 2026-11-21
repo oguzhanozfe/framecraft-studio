@@ -238,11 +238,24 @@ def place_footage(shots, folder):
                 ):
                     continue
                 cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
+                quiet = 0
+                last_scene = None
                 for i in range(round(seconds * fps)):
                     ok, image = cap.read()
                     if not ok:
                         break
                     h, w = image.shape[:2]
+                    if shot.get("avoid_freeze"):
+                        scene = background_key(image)
+                        quiet = (
+                            quiet + 1
+                            if last_scene is not None
+                            and np.mean(cv2.absdiff(scene, last_scene)) < 0.23
+                            else 0
+                        )
+                        last_scene = scene
+                        if quiet >= max(2, round(fps * 0.40)):
+                            break
                     if (
                         shot.get("avoid_title_cards")
                         and i % max(1, round(fps / 3)) == 0
@@ -259,9 +272,12 @@ def place_footage(shots, folder):
                             break
                     strip = int(min(w, h * 9 / 16))
                     x = round((w - strip) * shot.get("horizontal_focus", 0.5))
-                    pixels = cv2.resize(
-                        image[h // 8 : h * 2 // 3, x : x + strip], (32, 48)
+                    visible = (
+                        image
+                        if shot.get("framing") == "contain"
+                        else image[h // 8 : h * 2 // 3, x : x + strip]
                     )
+                    pixels = cv2.resize(visible, (32, 48), interpolation=cv2.INTER_AREA)
                     if pixels.std() < 3 and (pixels.mean() < 12 or pixels.mean() > 245):
                         break
                 else:

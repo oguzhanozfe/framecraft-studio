@@ -36,7 +36,7 @@ class Brief(BaseModel):
     language: Literal["tr", "en"] = "tr"
     variants: int = Field(2, ge=1, le=10)
     shots: int = Field(3, ge=1, le=6)
-    provider: Literal["auto", "h3", "ltx", "standalone"] = "auto"
+    provider: Literal["auto", "h3", "ltx", "wan", "standalone"] = "auto"
     reference: str | None = Field(None, pattern="^[a-f0-9]{32}$")
     use_footage: bool = False
     hook: str = Field("", max_length=70)

@@ -16,7 +16,7 @@ from .core import read, save
 from .director import CREATOR_DIRECTION, CreativeIntent, ask
 from .motion_copy import make_voice
 from .motion_review import reference_check
-from .providers import generate
+from .providers import generate, inventory
 
 
 class Scene(BaseModel):
@@ -141,20 +141,42 @@ def moving_interval(video, seconds, *, skip=0):
 
 def source_shots(item, source, output, scenes):
     shots = []
+    provider = item.get("render_model")
+    if not provider or provider == "auto":
+        provider = next(
+            (
+                model["id"]
+                for model in inventory()["models"]
+                if model["available"] and model["id"] in {"h3", "ltx", "wan"}
+            ),
+            None,
+        )
+    if not provider:
+        raise ValueError("Connect H3, LTX or Wan in ComfyUI for the presenter shots")
     game = item["kind"] != "product"
-    real = preview_cfr(source) if game else None
+    publisher = item.get("publisher_footage", {})
+    real = (
+        (source / publisher["file"] if publisher else preview_cfr(source))
+        if game
+        else None
+    )
     photos = refs(item, source) if not game else []
     durations = [4, 5, 6, 5, 6, 4] if game else [4, 6, 6, 5, 5, 4]
     for n, (s, duration) in enumerate(zip(scenes, durations, strict=True)):
         role = "creative" if n in (0, 5) else "demonstration"
-        supplied = (
+        supplied = item.get("shot_sources", {}).get(str(n + 1)) or (
             item.get("creator_sources", {}).get(str(n + 1))
             if role == "creative"
             else None
         )
         if supplied:
             path = source.parent / supplied
-            checked = reference_check(path, None, model=item.get("vision_model"))
+            reference = (
+                photos[(n - 1) % len(photos)]
+                if photos and role == "demonstration"
+                else None
+            )
+            checked = reference_check(path, reference, model=item.get("vision_model"))
             start = moving_interval(path, duration)
             if checked["defect"] != "none" or start is None:
                 supplied = None
@@ -162,9 +184,11 @@ def source_shots(item, source, output, scenes):
                 framing = "cover"
         if not supplied and game and role == "demonstration":
             # Leave the title/end slates of publisher reels out of the cut.
-            start = 2 + sum(durations[1:n])
+            start = publisher["starts"][n - 1] if publisher else 2 + sum(durations[1:n])
             path = real
-            framing = "cover" if item.get("portrait_game") else "contain"
+            framing = publisher.get("framing") or (
+                "cover" if item.get("portrait_game") else "contain"
+            )
         elif not supplied:
             frame_folder = output / f"take-{n + 1}"
             frame_folder.mkdir(exist_ok=True)
@@ -185,12 +209,13 @@ def source_shots(item, source, output, scenes):
             if (
                 not receipt.exists()
                 or read(receipt)["signature"] != sig
+                or read(receipt).get("model") != provider
                 or not path.exists()
             ):
                 seed = secrets.randbelow(2**31 - 1)
                 tmp = frame_folder / "take.partial.mp4"
                 generate(
-                    "h3",
+                    provider,
                     prompt,
                     seed,
                     "vertical",
@@ -204,7 +229,7 @@ def source_shots(item, source, output, scenes):
                     receipt,
                     {
                         "seed": seed,
-                        "model": "h3",
+                        "model": provider,
                         "signature": sig,
                         "prompt": prompt,
                         "reference": ref.name if ref else None,
@@ -235,7 +260,7 @@ def source_shots(item, source, output, scenes):
                 seed = secrets.randbelow(2**31 - 1)
                 tmp = frame_folder / "take.partial.mp4"
                 generate(
-                    "h3",
+                    provider,
                     revision,
                     seed,
                     "vertical",
@@ -255,6 +280,14 @@ def source_shots(item, source, output, scenes):
                 "seconds": duration,
                 "start": start,
                 "framing": framing,
+                **(
+                    {
+                        "search_radius": publisher.get("search_radius", 3),
+                        "avoid_freeze": True,
+                    }
+                    if game and role == "demonstration"
+                    else {}
+                ),
                 "layout": (
                     "caption"
                     if item.get("silent")
@@ -342,6 +375,7 @@ def produce_locked(item, parent, output, stage):
                 "type": item["kind"],
                 "facts": item["proof"],
                 "script": receipt["copy"],
+                "existing_shot_actions": item.get("shot_actions", {}),
                 "audience": item["audience"],
             },
             model_override=item.get("editor_model"),
@@ -360,6 +394,8 @@ def produce_locked(item, parent, output, stage):
         "output": "master.mp4",
         "evidence": [evidence["url"]],
     }
+    if item.get("publisher_footage"):
+        recipe["evidence"].append(item["publisher_footage"]["url"])
     if not silent:
         recipe.update(
             voice="voice.wav",

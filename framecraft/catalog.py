@@ -146,7 +146,7 @@ def install_lora(version):
 
 
 def install_model(name):
-    if name not in ("h3", "ltx"):
+    if name not in ("h3", "ltx", "wan"):
         raise ValueError("Unknown family")
     g = template(name)
     out = models_dir()
@@ -161,6 +161,16 @@ def install_model(name):
                 ("4", "vae", "vae_name"),
                 ("5", "loras", "lora_name"),
             ]
+        }
+    elif name == "wan":
+        repo = "Comfy-Org/Wan-2.2"
+        paths = {
+            "split_files/" + sub + "/" + g[node]["inputs"][key]: sub
+            for sub, node, key in (
+                ("diffusion_models", "1", "unet_name"),
+                ("text_encoders", "2", "clip_name"),
+                ("vae", "3", "vae_name"),
+            )
         }
     else:
         repo = "ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8"
@@ -181,6 +191,7 @@ def install_model(name):
         httpx.get(
             "https://huggingface.co/api/models/" + repo,
             params={"blobs": "true"},
+            follow_redirects=True,
             timeout=25,
         )
         .raise_for_status()

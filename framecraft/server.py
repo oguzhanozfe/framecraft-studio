@@ -363,7 +363,7 @@ def civitai(q: str = "UGC"):
 
 @app.post("/api/install/model/{name}", status_code=202)
 def install(name: str):
-    if name not in ("h3", "ltx"):
+    if name not in ("h3", "ltx", "wan"):
         raise ValueError("Unknown model")
     catalog.models_dir()
     return submit("install", "install.json", {"model": name})

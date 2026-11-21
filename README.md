@@ -34,6 +34,7 @@ Open **Bağlantılar**. Studio checks the actual node types and model filenames 
 
 | Renderer | Setup |
 | --- | --- |
+| Wan 2.2 TI2V-5B | The same native graph supports text and reference images. Studio installs the diffusion model, UMT5 encoder and VAE with SHA-256 verification. The published ComfyUI workflow uses 20 UniPC steps. [Official workflow and model files](https://docs.comfy.org/tutorials/video/wan/wan2_2) |
 | MiniMax H3 | Start ComfyUI with H3 nodes. The default URL is `http://127.0.0.1:8188`. Set the ComfyUI models directory and use **Model dosyalarını kur** to install the INT8 diffusion model, Qwen encoder, both VAEs and the 8-step Turbo LoRA. |
 | LTX 2.5 | Install the [CCTech loader](https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader) in ComfyUI. The installer downloads ChrisColeTech's scaled FP8 weights, GGUF text encoder and projector, and audio/video VAEs. |
 | Standalone H3 | Point the standalone directory at a [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) install with `runtime/sd-cli.exe`, `sd-cli.exe` or `sd-cli`, and the four [quantized H3 files](https://huggingface.co/unsloth/MiniMax-H3-GGUF) named in `framecraft/providers.py` under `models/`. It renders directly with CPU text-encoder offload. |

@@ -2,11 +2,14 @@
 
 import argparse
 import hashlib
+import subprocess
+import tempfile
 from pathlib import Path
 import secrets
 import cv2
 import numpy as np
 from pydantic import BaseModel, Field
+from PIL import Image, ImageDraw
 from .core import read, save
 from .director import ask
 from .providers import generate
@@ -51,6 +54,67 @@ class CastingChoice(BaseModel):
     visible_defects: list[str]
 
 
+def casting_reel(candidates, folder):
+    from .campaign_motion import font
+
+    cell_w, cell_h = 320, 568
+    titles = {"h3": "MiniMax H3", "ltx": "LTX 2.5", "wan": "Wan 2.2 5B"}
+    plate = Image.new("RGB", (cell_w * len(candidates), 56), (19, 23, 25))
+    draw = ImageDraw.Draw(plate)
+    inputs = []
+    filters = []
+    for i, (model, path) in enumerate(candidates):
+        inputs.extend(["-i", str(folder / path)])
+        draw.text(
+            (cell_w * (i + 0.5), 28),
+            titles.get(model, model),
+            anchor="mm",
+            font=font(23, True),
+            fill="white",
+        )
+        filters.append(f"[{i}:v]fps=24,scale={cell_w}:{cell_h},setsar=1[s{i}]")
+    streams = "".join(f"[s{i}]" for i in range(len(candidates)))
+    filters.extend(
+        [
+            f"{streams}hstack=inputs={len(candidates)}:shortest=1[row]",
+            "[row]pad=iw:ih+56[padded]",
+            f"[padded][{len(candidates)}:v]overlay=0:{cell_h}[out]",
+        ]
+    )
+    with tempfile.TemporaryDirectory(dir=folder) as tmp:
+        label = Path(tmp) / "labels.png"
+        plate.save(label)
+        target = Path(tmp) / "comparison.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                *inputs,
+                "-i",
+                str(label),
+                "-filter_complex",
+                ";".join(filters),
+                "-map",
+                "[out]",
+                "-an",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-threads",
+                "3",
+                "-movflags",
+                "+faststart",
+                str(target),
+            ],
+            check=True,
+        )
+        target.replace(folder / "comparison.mp4")
+
+
 def choose_opening(plan, folder):
     candidates = list(plan["candidates"].items())
     strips = []
@@ -81,6 +145,7 @@ def choose_opening(plan, folder):
         strips.append(strip)
     board = np.vstack(strips)
     cv2.imwrite(str(folder / "casting.jpg"), board)
+    casting_reel(candidates, folder)
     response = ask(
         CastingChoice,
         "Judge the actual contact sheet. Each numbered row is an anonymous local video model, showing four chronological frames. Choose the row closest to the casting brief. Base the decision on natural skin, physical plausibility, candid action, wardrobe and identity continuity. Cite what you can see, and identify visible defects even in the winner.",
