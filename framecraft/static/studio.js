@@ -37,6 +37,10 @@ const fields = {
   VISION_MODEL: "Görsel analiz modeli",
   H3_LORA: "Ek H3 LoRA dosyası",
   TRANSCRIBE_MODEL: "Yerel Whisper modeli (isteğe bağlı)",
+  VOICE_PYTHON: "FreyaTTS Python yolu",
+  FREYA_SOURCE: "FreyaTTS kaynak klasörü",
+  FREYA_MODEL: "FreyaTTS ağırlıkları",
+  VOICE_DEVICE: "FreyaTTS cihazı (cpu / cuda)",
   META_PAGE: "Facebook sayfa ID",
   META_AD_ACCOUNT: "Meta reklam hesabı ID",
   LLM_KEY: "Model API anahtarı",
@@ -437,7 +441,7 @@ async function jobView(id) {
         '</div><div class="bar"><small>Aynı varyantın toplamını günceller.</small><button>Sonucu kaydet</button></div></form>'
       : "") +
     (["needs_review", "interrupted", "failed"].includes(j.status) &&
-    j.kind === "create"
+    ["create","campaign"].includes(j.kind)
       ? '<button id="retry">Yeni deneme başlat</button>'
       : "") +
     "<details><summary>Üretim kayıtları ve kare raporları</summary>" +
@@ -565,8 +569,11 @@ async function jobView(id) {
     };
   }
   if ($("#retry"))
-    $("#retry").onclick = async () =>
-      goJob(await api("/api/jobs/" + id + "/retry", "POST"));
+    $("#retry").onclick = async () => {
+      const next = await api("/api/jobs/" + id + "/retry", "POST");
+      if (next.id === id) await jobView(id);
+      else goJob(next);
+    };
   if ($("#channel"))
     $("#channel").onchange = async () => {
       const box = $("#creator");

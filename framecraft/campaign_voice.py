@@ -14,6 +14,46 @@ def duration(path):
         return handle.getnframes() / handle.getframerate()
 
 
+def place_read(voice, target, segments, beats):
+    """Place complete, natural-speed phrases against picture without duplicating a stem."""
+    import numpy as np
+
+    if len(segments) != len(beats) or not beats or min(beats) <= 0:
+        raise ValueError("One narration phrase per camera beat is required")
+    with wave.open(str(voice), "rb") as source:
+        if source.getsampwidth() != 2 or source.getnchannels() != 1:
+            raise ValueError("Expected a mono 16-bit dry narration stem")
+        rate = source.getframerate()
+        raw = np.frombuffer(source.readframes(source.getnframes()), dtype="<i2")
+    result = np.zeros(round(sum(beats) * rate), dtype="<i2")
+    timings = []
+    cursor = 0
+    for i, (segment, length) in enumerate(zip(segments, beats, strict=True)):
+        phrase = raw[round(segment["start"] * rate) : round(segment["end"] * rate)]
+        # The next thought can lead the corresponding camera movement by a quarter second.
+        start = max(cursor + round(rate * 0.15), round(rate * (sum(beats[:i]) - 0.25)))
+        end = start + len(phrase)
+        if (
+            not len(phrase)
+            or end > len(result)
+            or end > (sum(beats[: i + 1]) + 0.45) * rate
+        ):
+            raise ValueError(f"Phrase {i + 1} does not fit its camera beat")
+        result[start:end] = phrase
+        cursor = end
+        timings.append(
+            {
+                "start": round(start / rate, 3),
+                "end": round(end / rate, 3),
+                "text": segment["text"],
+            }
+        )
+    with wave.open(str(target), "wb") as dst:
+        dst.setparams((1, 2, rate, 0, "NONE", "uncompressed"))
+        dst.writeframes(result.tobytes())
+    return timings
+
+
 def synthesize(text, output, *, seconds=30, segments=None):
     """Keep the natural delivery. Reject overlength reads instead of speeding them up."""
     python = os.getenv("FRAMECRAFT_VOICE_PYTHON", sys.executable)

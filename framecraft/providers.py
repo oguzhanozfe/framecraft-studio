@@ -159,8 +159,11 @@ def generate(
     *,
     frames=73,
     reference=None,
+    end_reference=None,
     front=False,
 ):
+    if end_reference is not None and name != "h3":
+        raise ValueError("Terminal-frame conditioning requires the H3 graph")
     if reference is not None and name not in {"h3", "ltx", "wan"}:
         raise ValueError(
             "Reference-conditioned campaign shots require H3, LTX or Wan in ComfyUI"
@@ -240,13 +243,18 @@ def generate(
     token = uuid.uuid4().hex
     g[output]["inputs"]["filename_prefix"] = "video/framecraft-" + token
     with httpx.Client(base_url=comfy(), timeout=35) as client:
-        if reference is not None:
-            with reference.open("rb") as image:
+        for slot, frame in (("17", reference), ("19", end_reference)):
+            if frame is None:
+                continue
+            with frame.open("rb") as image:
                 upload = (
                     client.post(
                         "/upload/image",
                         files={
-                            "image": ("framecraft-" + token + reference.suffix, image)
+                            "image": (
+                                "framecraft-" + token + "-" + slot + frame.suffix,
+                                image,
+                            )
                         },
                         data={"type": "input"},
                     )
@@ -256,9 +264,12 @@ def generate(
             name_in_comfy = "/".join(
                 filter(None, (upload.get("subfolder"), upload["name"]))
             )
-            g["17"] = {"class_type": "LoadImage", "inputs": {"image": name_in_comfy}}
+            g[slot] = {"class_type": "LoadImage", "inputs": {"image": name_in_comfy}}
             if name == "h3":
-                g["6"]["inputs"]["first_frame"] = ["17", 0]
+                g["6"]["inputs"]["first_frame" if slot == "17" else "last_frame"] = [
+                    slot,
+                    0,
+                ]
             elif name == "wan":
                 g["6"]["inputs"]["start_image"] = ["17", 0]
             else:
@@ -291,21 +302,20 @@ def generate(
                 )
         monitor = PreviewMonitor(comfy(), token, target.parent)
         try:
-            resp = client.post(
-                "/prompt",
-                json={
-                    "prompt": g,
-                    "front": front,
-                    "client_id": token,
-                    "extra_data": {"preview_method": "latent2rgb"},
-                },
-            )
+            request = {
+                "prompt": g,
+                "front": front,
+                "client_id": token,
+                "extra_data": {"preview_method": "latent2rgb"},
+            }
+            resp = client.post("/prompt", json=request)
             if resp.is_error:
                 raise RuntimeError("ComfyUI rejected graph: " + resp.text[:900])
             pid = resp.json()["prompt_id"]
             deadline = time.monotonic() + 3600
             progress(f"{name} · render {pid}")
             next_history = 0.0
+            retried_read = False
             while time.monotonic() < deadline:
                 monitor.inspect(client, pid, progress)
                 if time.monotonic() < next_history:
@@ -319,6 +329,17 @@ def generate(
                             for event, msg in data["status"]["messages"]
                             if event == "execution_error"
                         ]
+                        if not retried_read and any(
+                            "HostBuffer.read_file_slice failed" in e for e in errors
+                        ):
+                            retried_read = True
+                            pid = (
+                                client.post("/prompt", json=request)
+                                .raise_for_status()
+                                .json()["prompt_id"]
+                            )
+                            progress(f"Retrying model weight read · {pid}")
+                            continue
                         raise RuntimeError("ComfyUI: " + " ".join(errors)[:800])
                     items = data.get("outputs", {}).get(output, {}).get("images", [])
                     if items:

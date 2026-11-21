@@ -1,8 +1,9 @@
-"""Produce a thirty-second silent campaign from a supported store listing."""
+"""Produce a thirty-second campaign from a supported store listing."""
 
 import re
 import shutil
 from urllib.parse import urlsplit
+from typing import Literal
 
 import av
 from pydantic import BaseModel, Field, field_validator
@@ -31,6 +32,8 @@ class ProductLink(BaseModel):
     project: str = Field("", max_length=72)
     audience: str = Field("", max_length=400)
     angle: str = Field("", max_length=1500)
+    camera: Literal["coverage", "handheld"] = "coverage"
+    audio: Literal["silent", "voice_music"] = "silent"
 
     @field_validator("url")
     @classmethod
@@ -61,8 +64,16 @@ def produce_link(job):
         "angle": request.angle.strip()
         or "Build a plausible ownership desire from one documented detail. Open on a real action and demonstrate the product in that context.",
         "proof": "\n".join([name, *evidence["facts"]]),
-        "silent": True,
+        "camera": request.camera,
+        "silent": request.audio == "silent",
     }
+    if request.audio == "voice_music":
+        from .core import setting
+
+        item["score_direction"] = (
+            "Original understated instrumental bedroom groove. Warm keys, light rhythmic percussion, space for one Turkish voice-over. No singing, vocal samples or risers."
+        )
+        item["asr_model"] = setting("TRANSCRIBE_MODEL")
     if kind == "game":
         with av.open(str(source / "preview.mp4")) as media:
             stream = media.streams.video[0]
@@ -85,4 +96,4 @@ def produce_link(job):
             "source": evidence["url"],
         },
     )
-    record(job, "complete", "30 saniyelik sessiz UGC proje klasörüne kaydedildi")
+    record(job, "complete", "30 saniyelik UGC proje klasörüne kaydedildi")

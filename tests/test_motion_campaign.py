@@ -4,6 +4,19 @@ import pytest
 from framecraft.campaign_motion import render, repeated_motion, spans
 
 
+def test_voice_alignment_catches_a_delayed_right_channel_and_echo():
+    from framecraft.voice_alignment import RATE, compare
+
+    rng = np.random.default_rng(51)
+    voice = rng.normal(0, 0.12, RATE * 3).astype("float32")
+    noise = rng.normal(0, 0.012, (len(voice), 2)).astype("float32")
+    mix = np.column_stack([voice, voice]) + noise
+    assert compare(voice, mix)["passed"]
+    delayed = np.roll(voice, RATE // 10)
+    assert not compare(voice, np.column_stack([voice, delayed]))["passed"]
+    assert not compare(voice, mix + 0.65 * delayed[:, None])["passed"]
+
+
 def test_short_source_and_reused_interval_fail_before_encoding(tmp_path):
     src = tmp_path / "scene.mp4"
     subprocess.run(

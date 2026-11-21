@@ -315,6 +315,16 @@ def artifact(job: str, name: str):
 @app.post("/api/jobs/{job}/retry", status_code=202)
 def retry(job: str):
     data = detail(job)
+    if data["kind"] == "campaign":
+        queued = query(
+            "UPDATE jobs SET status='queued',detail='Kaydedilmiş çekimlerden devam ediliyor',updated=unixepoch() "
+            "WHERE id=? AND status IN ('failed','interrupted','needs_review') RETURNING id",
+            (job,),
+        )
+        if not queued:
+            raise ValueError("Only a stopped campaign can be resumed")
+        pool.submit(worker, job)
+        return {"id": job}
     if data["kind"] != "create" or data["status"] not in (
         "failed",
         "needs_review",

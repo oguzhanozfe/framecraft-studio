@@ -161,7 +161,15 @@ def source_shots(item, source, output, scenes):
         else None
     )
     photos = refs(item, source) if not game else []
-    durations = [4, 5, 6, 5, 6, 4] if game else [4, 6, 6, 5, 5, 4]
+    durations = item.get("shot_seconds") or (
+        [4, 5, 6, 5, 6, 4] if game else [4, 6, 6, 5, 5, 4]
+    )
+    if (
+        len(durations) != 6
+        or sum(durations) != 30
+        or not all(type(v) is int and v > 0 for v in durations)
+    ):
+        raise ValueError("Six positive whole-second shots totaling 30 seconds required")
     for n, (s, duration) in enumerate(zip(scenes, durations, strict=True)):
         role = "creative" if n in (0, 5) else "demonstration"
         supplied = item.get("shot_sources", {}).get(str(n + 1)) or (
@@ -170,6 +178,10 @@ def source_shots(item, source, output, scenes):
             else None
         )
         if supplied:
+            framing = "cover"
+            if isinstance(supplied, dict):
+                framing = supplied.get("framing", "cover")
+                supplied = supplied["file"]
             path = source.parent / supplied
             reference = (
                 photos[(n - 1) % len(photos)]
@@ -180,8 +192,6 @@ def source_shots(item, source, output, scenes):
             start = moving_interval(path, duration)
             if checked["defect"] != "none" or start is None:
                 supplied = None
-            else:
-                framing = "cover"
         if not supplied and game and role == "demonstration":
             # Leave the title/end slates of publisher reels out of the cut.
             start = publisher["starts"][n - 1] if publisher else 2 + sum(durations[1:n])
@@ -332,6 +342,10 @@ def produce_locked(item, parent, output, stage):
             return render(read(config), config.parent)
     source = parent / "source"
     evidence = read(source / "source.json")
+    if item.get("camera") == "handheld" and item["kind"] == "product":
+        from .phone_camera import campaign
+
+        return campaign(item, output, evidence, stage)
     brief = {
         "product": item["name"],
         "audience": item["audience"],
@@ -396,6 +410,13 @@ def produce_locked(item, parent, output, stage):
     }
     if item.get("publisher_footage"):
         recipe["evidence"].append(item["publisher_footage"]["url"])
+    for source in item.get("shot_sources", {}).values():
+        if (
+            isinstance(source, dict)
+            and source.get("url")
+            and source["url"] not in recipe["evidence"]
+        ):
+            recipe["evidence"].append(source["url"])
     if not silent:
         recipe.update(
             voice="voice.wav",
@@ -404,7 +425,14 @@ def produce_locked(item, parent, output, stage):
         )
     if not silent and item.get("asr_model"):
         recipe["asr_model"] = os.path.relpath(parent.parent / item["asr_model"], output)
-    if not silent and item.get("score_direction"):
+    if not silent:
+        add_score(item, output, recipe)
+    save(output / "motion.json", recipe)
+    return render(recipe, output)
+
+
+def add_score(item, output, recipe):
+    if item.get("score_direction"):
         from .campaign_score import compose
 
         score = output / "score.flac"
@@ -420,8 +448,6 @@ def produce_locked(item, parent, output, stage):
                 seed=int(hashlib.sha256(item["slug"].encode()).hexdigest()[:7], 16),
             )
         recipe["score"] = score.name
-    save(output / "motion.json", recipe)
-    return render(recipe, output)
 
 
 def export_motion(root, items):

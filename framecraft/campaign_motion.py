@@ -293,12 +293,12 @@ def place_footage(shots, folder):
 def render_soundtrack(recipe, folder, soundtrack, seconds):
     voice = folder / recipe["voice"]
     inputs = ["-i", voice]
-    speech = f"loudnorm=I=-16:TP=-1.6:LRA=9,aresample=48000,adelay=120,apad,atrim=duration={seconds}"
+    speech = f"aformat=channel_layouts=mono,loudnorm=I=-16:TP=-1.6:LRA=9,aresample=48000,apad,atrim=duration={seconds}"
     if recipe.get("score"):
         inputs += ["-i", folder / recipe["score"]]
         mix = (
-            f"[0:a]{speech},aformat=channel_layouts=stereo,asplit=2[vo][key];"
-            f"[1:a]loudnorm=I=-24:TP=-3:LRA=8,aresample=48000,afade=t=out:st={max(0, seconds - 1)}:d=1[bed];"
+            f"[0:a]{speech},pan=stereo|c0=c0|c1=c0,asplit=2[vo][key];"
+            f"[1:a]loudnorm=I=-26:TP=-3:LRA=8,aresample=48000,apad,atrim=duration={seconds},afade=t=out:st={max(0, seconds - 1)}:d=1[bed];"
             "[bed][key]sidechaincompress=threshold=0.024:ratio=3:attack=12:release=260[under];"
             "[vo][under]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.90:latency=1[a]"
         )
@@ -501,6 +501,8 @@ def audit(path, folder, cues, recipe):
     idx = 0
     count = 0
     last = None
+    joins = []
+    outgoing = None
     near = 0
     sequence = []
     ledger = folder / "motion-frames.jsonl.gz"
@@ -511,6 +513,8 @@ def audit(path, folder, cues, recipe):
         av_length = float(a.duration * a.time_base) if a and a.duration else 0
         if silent and a is not None:
             all_failures.add("unexpected_audio")
+        if not silent and len(video.streams.audio) != 1:
+            all_failures.add("audio_stream_count")
         actual_rate = float(v.average_rate)
         if (
             (v.width, v.height) != SIZE
@@ -521,6 +525,7 @@ def audit(path, folder, cues, recipe):
         for f in video.decode(v):
             if idx + 1 < len(cues) and count == cues[idx]["to"]:
                 idx += 1
+                outgoing = last
                 last = None
                 near = 0
                 sequence = []
@@ -560,6 +565,14 @@ def audit(path, folder, cues, recipe):
             # Exclude the static canvas surrounding a contained phone or gameplay frame.
             x0, y0, x1, y1 = cue.get("motion_box", [0, 150, 1080, 1270])
             thumb = background_key(img[y0:y1, x0:x1])
+            if outgoing is not None:
+                difference = float(np.mean(cv2.absdiff(thumb, outgoing)))
+                joins.append(
+                    {"frame": count, "mean_luma_difference": round(difference, 2)}
+                )
+                if recipe.get("phone_continuity") and difference > 18:
+                    flags.add("camera_jump")
+                outgoing = None
             if last is not None:
                 near = near + 1 if np.mean(cv2.absdiff(thumb, last)) < 0.18 else 0
                 if near >= FPS // 2:
@@ -608,6 +621,13 @@ def audit(path, folder, cues, recipe):
         levels.get("mean_volume_db", -99) < -29 or levels.get("max_volume_db", 0) > -0.2
     ):
         all_failures.add("audio_level")
+    if not silent and recipe.get("verify_voice_alignment"):
+        from .voice_alignment import measure
+
+        alignment = measure(folder / recipe["voice"], path)
+        levels["voice_alignment"] = alignment
+        if not alignment["passed"]:
+            all_failures.add("voice_alignment")
     speech = {}
     if not silent and recipe.get("asr_model"):
         speech = transcript(path, folder / recipe["asr_model"], "tr")
@@ -638,6 +658,7 @@ def audit(path, folder, cues, recipe):
         "sha256": digest,
         "source_evidence": recipe.get("evidence", []),
         "voice": recipe.get("voice_provider"),
+        "joins": joins,
         "timeline": cues,
     }
     save(folder / "motion-assessment.json", result)
