@@ -33,7 +33,8 @@ class ProductLink(BaseModel):
     audience: str = Field("", max_length=400)
     angle: str = Field("", max_length=1500)
     camera: Literal["coverage", "handheld"] = "coverage"
-    audio: Literal["silent", "voice_music"] = "silent"
+    audio: Literal["silent", "music", "voice_music"] = "silent"
+    voice_profile: Literal["freya", "pocket/female_1", "pocket/female_2"] = "freya"
 
     @field_validator("url")
     @classmethod
@@ -65,14 +66,17 @@ def produce_link(job):
         or "Build a plausible ownership desire from one documented detail. Open on a real action and demonstrate the product in that context.",
         "proof": "\n".join([name, *evidence["facts"]]),
         "camera": request.camera,
+        "audio": request.audio,
+        "voice_profile": request.voice_profile,
         "silent": request.audio == "silent",
     }
-    if request.audio == "voice_music":
-        from .core import setting
-
+    if request.audio != "silent":
         item["score_direction"] = (
             "Original understated instrumental bedroom groove. Warm keys, light rhythmic percussion, space for one Turkish voice-over. No singing, vocal samples or risers."
         )
+    if request.audio == "voice_music":
+        from .core import setting
+
         item["asr_model"] = setting("TRANSCRIBE_MODEL")
     if kind == "game":
         with av.open(str(source / "preview.mp4")) as media:

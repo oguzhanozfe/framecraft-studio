@@ -38,6 +38,7 @@ const fields = {
   H3_LORA: "Ek H3 LoRA dosyası",
   TRANSCRIBE_MODEL: "Yerel Whisper modeli (isteğe bağlı)",
   VOICE_PYTHON: "FreyaTTS Python yolu",
+  POCKET_PYTHON: "Pocket TTS Türkçe Python yolu",
   FREYA_SOURCE: "FreyaTTS kaynak klasörü",
   FREYA_MODEL: "FreyaTTS ağırlıkları",
   VOICE_DEVICE: "FreyaTTS cihazı (cpu / cuda)",

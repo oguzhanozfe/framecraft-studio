@@ -41,6 +41,15 @@ def spans(recipe, folder):
     seen = {}
     total = 0
     for shot in recipe["shots"]:
+        if lock := shot.get("approved_span"):
+            if shot.get("search_radius") or (shot.get("start", 0), shot["seconds"]) != (
+                lock["start"],
+                lock["seconds"],
+            ):
+                raise ValueError("The approved footage interval has changed")
+            with (folder / shot["file"]).open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != lock["sha256"]:
+                    raise ValueError("The approved footage has changed")
         length = round(shot["seconds"] * FPS)
         total += length
         sources = [shot] + ([shot["inset"]] if shot.get("inset") else [])
@@ -291,6 +300,38 @@ def place_footage(shots, folder):
 
 
 def render_soundtrack(recipe, folder, soundtrack, seconds):
+    if recipe.get("audio_mode") == "music":
+        score = folder / recipe["score"]
+        with av.open(str(score)) as src:
+            stream = src.streams.audio[0]
+            duration = (
+                float(stream.duration * stream.time_base)
+                if stream.duration
+                else src.duration / av.time_base
+            )
+        if duration < seconds - 0.025:
+            raise ValueError("The instrumental is shorter than the picture")
+        run(
+            [
+                "-i",
+                score,
+                "-map",
+                "0:a:0",
+                "-vn",
+                "-af",
+                f"loudnorm=I=-19:TP=-1.8:LRA=9,aresample=48000,afade=t=out:st={max(0, seconds - 0.7)}:d=0.7",
+                "-t",
+                str(seconds),
+                "-ac",
+                "2",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                soundtrack,
+            ]
+        )
+        return
     voice = folder / recipe["voice"]
     inputs = ["-i", voice]
     speech = f"aformat=channel_layouts=mono,loudnorm=I=-16:TP=-1.6:LRA=9,aresample=48000,apad,atrim=duration={seconds}"
@@ -332,6 +373,13 @@ def render(recipe, folder):
         cues = []
         index = 0
         for n, shot in enumerate(recipe["shots"]):
+            join = shot.get(
+                "join", "match" if recipe.get("phone_continuity") else "cut"
+            )
+            if join not in {"cut", "match", "dissolve"} or (
+                n == 0 and join == "dissolve"
+            ):
+                raise ValueError("Invalid incoming shot transition")
             overlay = folder / f"motion-text-{n:02}.png"
             lines = graphic(shot, overlay)
             frames = round(shot["seconds"] * FPS)
@@ -353,7 +401,7 @@ def render(recipe, folder):
                 motion_box = [0, 150, 1080, 1270]
                 scale = f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*{framing}:(ih-oh)/2"
             conversion = f"fps={FPS}"
-            if recipe.get("phone_continuity"):
+            if recipe.get("phone_continuity") and not shot.get("approved_span"):
                 conversion = f"tpad=stop_mode=clone:stop_duration=0.14,minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
             vf = f"[0:v]setpts=PTS-STARTPTS,{conversion},{scale},setsar=1[base];"
             inset = shot.get("inset")
@@ -370,6 +418,39 @@ def render(recipe, folder):
                 ]
                 vf += f"[2:v]setpts=PTS-STARTPTS,fps={FPS},scale={iw}:{ih}:force_original_aspect_ratio=increase,crop={iw}:{ih},setsar=1,pad=iw+6:ih+6:3:3:color=0x95ead4[inset];[base][inset]overlay={ix}:{iy}:eof_action=pass[duet];"
                 layer = "duet"
+            if join == "dissolve":
+                # Fade the outgoing shot's actual last clean frame over the incoming motion.
+                prior_index = 3 if inset else 2
+                extra += [
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    str(FPS),
+                    "-i",
+                    scratch / f"tail-{n - 1}.png",
+                ]
+                vf += (
+                    f"[{prior_index}:v]trim=duration=0.20,format=yuva420p,"
+                    "fade=t=out:st=0:d=0.17:alpha=1[handle];"
+                    f"[{layer}][handle]overlay=eof_action=pass:repeatlast=0[blended];"
+                )
+                layer = "blended"
+            tail_output = []
+            if (
+                n + 1 < len(recipe["shots"])
+                and recipe["shots"][n + 1].get("join") == "dissolve"
+            ):
+                vf += f"[{layer}]split=2[clean][tail_src];[tail_src]select='eq(n,{frames - 1})',format=rgb24[tail];"
+                layer = "clean"
+                tail_output = [
+                    "-map",
+                    "[tail]",
+                    "-frames:v",
+                    "1",
+                    "-update",
+                    "1",
+                    scratch / f"tail-{n}.png",
+                ]
             vf += f"[{layer}][1:v]overlay=0:0:format=auto[texted];"
             layer = "texted"
             if shot.get("layout") == "versus":
@@ -416,6 +497,7 @@ def render(recipe, folder):
                     "-crf",
                     "17",
                     part,
+                    *tail_output,
                 ]
             )
             parts.append(part)
@@ -428,6 +510,12 @@ def render(recipe, folder):
                     "lines": lines,
                     "source": shot["file"],
                     "source_start_seconds": shot.get("start", 0),
+                    "join": join,
+                    **(
+                        {"approved_span": shot["approved_span"]}
+                        if shot.get("approved_span")
+                        else {}
+                    ),
                 }
             )
             index += frames
@@ -603,7 +691,9 @@ def audit(path, folder, cues, recipe):
             x0, y0, x1, y1 = cue.get("motion_box", [0, 150, 1080, 1270])
             thumb = background_key(img[y0:y1, x0:x1])
             camera = None
-            if recipe.get("phone_continuity"):
+            if recipe.get("phone_continuity") or recipe["shots"][idx].get(
+                "check_camera"
+            ):
                 camera = cv2.cvtColor(
                     cv2.resize(
                         img[y0:y1, x0:x1], (160, 180), interpolation=cv2.INTER_AREA
@@ -613,9 +703,19 @@ def audit(path, folder, cues, recipe):
             if outgoing is not None:
                 difference = float(np.mean(cv2.absdiff(thumb, outgoing)))
                 joins.append(
-                    {"frame": count, "mean_luma_difference": round(difference, 2)}
+                    {
+                        "frame": count,
+                        "mean_luma_difference": round(difference, 2),
+                        "join": cue.get("join", "cut"),
+                    }
                 )
-                if recipe.get("phone_continuity") and difference > 18:
+                if (
+                    cue.get(
+                        "join", "match" if recipe.get("phone_continuity") else "cut"
+                    )
+                    in {"match", "dissolve"}
+                    and difference > 18
+                ):
                     flags.add("camera_jump")
                 outgoing = None
             if last is not None:
@@ -674,7 +774,8 @@ def audit(path, folder, cues, recipe):
         levels.get("mean_volume_db", -99) < -29 or levels.get("max_volume_db", 0) > -0.2
     ):
         all_failures.add("audio_level")
-    if not silent and recipe.get("verify_voice_alignment"):
+    with_voice = not silent and recipe.get("audio_mode") != "music"
+    if with_voice and recipe.get("verify_voice_alignment"):
         from .voice_alignment import measure
 
         alignment = measure(folder / recipe["voice"], path)
@@ -682,7 +783,7 @@ def audit(path, folder, cues, recipe):
         if not alignment["passed"]:
             all_failures.add("voice_alignment")
     speech = {}
-    if not silent and recipe.get("asr_model"):
+    if with_voice and recipe.get("asr_model"):
         speech = transcript(path, folder / recipe["asr_model"], "tr")
         heard = " ".join(s["text"] for s in speech.get("segments", []))
         speech["similarity"] = round(similarity(recipe["spoken"], heard), 3)
@@ -700,6 +801,7 @@ def audit(path, folder, cues, recipe):
     with path.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     result = {
+        "audio_mode": "silent" if silent else recipe.get("audio_mode", "voice"),
         "passed": not all_failures,
         "failures": sorted(all_failures),
         "frames": count,
@@ -710,10 +812,14 @@ def audit(path, folder, cues, recipe):
         "speech": speech,
         "sha256": digest,
         "source_evidence": recipe.get("evidence", []),
-        "voice": recipe.get("voice_provider"),
+        "voice": recipe.get("voice_provider") if with_voice else None,
+        "voice_profile": recipe.get("voice_profile") if with_voice else None,
         "joins": joins,
         "timeline": cues,
     }
+    if recipe.get("score") and not silent:
+        with (folder / recipe["score"]).open("rb") as score:
+            result["score_sha256"] = hashlib.file_digest(score, "sha256").hexdigest()
     save(folder / "motion-assessment.json", result)
     return result
 

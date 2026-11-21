@@ -311,10 +311,14 @@ def source_shots(item, source, output, scenes):
                 ),
                 "layout": (
                     "caption"
-                    if item.get("silent")
+                    if item.get("silent") or item.get("audio") == "music"
                     else ("corner", "tag", "clean", "side", "clean", "corner")[n]
                 ),
-                "detail": (item["name"] if n == 0 and item.get("silent") else ""),
+                "detail": (
+                    item["name"]
+                    if n == 0 and (item.get("silent") or item.get("audio") == "music")
+                    else ""
+                ),
                 "eyebrow": item["name"] if n in (0, 5) else "",
                 "headline": s["label"],
                 **(
@@ -370,16 +374,19 @@ def produce_locked(item, parent, output, stage):
         "pronunciation": item.get("pronunciation", {}),
         "writer": item.get("editor_model"),
         "judge": item.get("writer_model"),
+        "voice_profile": item.get("voice_profile", "freya"),
     }
     voice_file = output / "voice.json"
     silent = item.get("silent", False)
-    if silent:
+    with_voice = not silent and item.get("audio") != "music"
+    if not with_voice:
         receipt = {"copy": item["angle"]}
     else:
         if (
             not voice_file.exists()
             or not (output / "voice.wav").is_file()
             or not read(voice_file).get("segments")
+            or read(voice_file).get("profile", "freya") != brief["voice_profile"]
             or read(voice_file)["source"]
             != {k: brief[k] for k in ("product", "audience", "direction", "facts")}
         ):
@@ -396,7 +403,7 @@ def produce_locked(item, parent, output, stage):
             CREATOR_DIRECTION
             + (
                 "Tell the story in pictures and in natural, compact Turkish captions. No one mouths dialogue. First and last shots show an adult creator in an ordinary setting with natural lighting. Use straight cuts, small plausible gestures and stable backgrounds. "
-                if silent
+                if not with_voice
                 else ""
             )
             + "Direct six chronological portrait shots for a Turkish creator video. Give each one a distinct 2–4 word Turkish on-screen headline relevant to the spoken read. For each action write a concrete English single-take smartphone camera direction. Open and close with an adult creator engaged in an activity directly relevant to the selling point, no dialogue or visible screen text. Middle four shots of a retail item are reference-conditioned: preserve the exact product and mark placement, show a single physically plausible interaction or real change of viewpoint per shot. Garments use a professional adult fashion presentation. For a game the middle four shots use actual publisher gameplay. Avoid lifestyle scenes that could introduce any unrelated product. Avoid simulated handwriting, overlays, zoom-only motion, staged smiles and unverified claims.",
@@ -436,13 +443,16 @@ def produce_locked(item, parent, output, stage):
             and source["url"] not in recipe["evidence"]
         ):
             recipe["evidence"].append(source["url"])
-    if not silent:
+    if not silent and not with_voice:
+        recipe["audio_mode"] = "music"
+    if with_voice:
         recipe.update(
             voice="voice.wav",
             spoken=receipt["text"],
             voice_provider=receipt["provider"],
+            voice_profile=receipt.get("profile", "freya"),
         )
-    if not silent and item.get("asr_model"):
+    if with_voice and item.get("asr_model"):
         recipe["asr_model"] = os.path.relpath(parent.parent / item["asr_model"], output)
     if not silent:
         add_score(item, output, recipe)

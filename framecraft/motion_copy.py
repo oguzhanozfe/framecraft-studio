@@ -74,7 +74,12 @@ def make_voice(folder, brief):
             brief.get("pronunciation", {}).items(), key=lambda x: -len(x[0])
         ):
             segments = [line.replace(original, phonetic) for line in segments]
-        receipt = synthesize(spoken, folder / "voice.wav", segments=segments)
+        receipt = synthesize(
+            spoken,
+            folder / "voice.wav",
+            segments=segments,
+            profile=brief.get("voice_profile", "freya"),
+        )
         save(
             folder / "voice.json",
             {
@@ -136,7 +141,12 @@ def make_voice(folder, brief):
             spoken = spoken.replace(original, phonetic)
         try:
             phrases = re.split(r"(?<=[.!?])\s+", spoken.strip())
-            receipt = synthesize(spoken, folder / "voice.wav", segments=phrases)
+            receipt = synthesize(
+                spoken,
+                folder / "voice.wav",
+                segments=phrases,
+                profile=brief.get("voice_profile", "freya"),
+            )
         except ValueError as problem:
             feedback = [str(problem), "Shorten the copy."]
             continue

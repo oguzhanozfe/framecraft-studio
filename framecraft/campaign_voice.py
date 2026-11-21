@@ -54,9 +54,13 @@ def place_read(voice, target, segments, beats):
     return timings
 
 
-def synthesize(text, output, *, seconds=30, segments=None):
+def synthesize(text, output, *, seconds=30, segments=None, profile="freya"):
     """Keep the natural delivery. Reject overlength reads instead of speeding them up."""
     python = os.getenv("FRAMECRAFT_VOICE_PYTHON", sys.executable)
+    if profile not in {"freya", "pocket/female_1", "pocket/female_2"}:
+        raise ValueError("Unknown narration profile")
+    if profile.startswith("pocket/"):
+        python = os.getenv("FRAMECRAFT_POCKET_PYTHON") or sys.executable
     source = os.getenv("FRAMECRAFT_FREYA_SOURCE")
     weights = os.getenv("FRAMECRAFT_FREYA_MODEL", "freyavoice/Freya-TTS")
     device = os.getenv("FRAMECRAFT_VOICE_DEVICE", "cuda")
@@ -75,6 +79,7 @@ def synthesize(text, output, *, seconds=30, segments=None):
                     source=source,
                     segments=segments,
                     seconds=seconds,
+                    profile=profile,
                 )
             ),
             encoding="utf-8",
@@ -93,7 +98,10 @@ def synthesize(text, output, *, seconds=30, segments=None):
         timings = json.loads((work / "timings.json").read_text()) if segments else []
         wav.replace(output)
     return {
-        "provider": "FreyaTTS",
+        "provider": "Pocket TTS Turkish"
+        if profile.startswith("pocket/")
+        else "FreyaTTS",
+        "profile": profile,
         "seconds": round(length, 3),
         "tempo": 1.0,
         "text": text,
@@ -103,16 +111,34 @@ def synthesize(text, output, *, seconds=30, segments=None):
 
 if __name__ == "__main__":
     params = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-    if params["source"]:
-        sys.path.insert(0, params["source"])
-    from freyatts import FreyaTTS
+    profile = params.get("profile", "freya")
+    if profile.startswith("pocket/"):
+        from pocket_tts_turkish import TurkishTTS, save_wav
 
-    model = FreyaTTS.from_pretrained(params["weights"], device=params["device"])
+        model = TurkishTTS.from_pretrained(device="cpu")
+        voice = profile.split("/")[1]
+        if voice not in model.voices:
+            raise ValueError("Selected voice is unavailable")
+
+        def speak(line):
+            return model.generate(line, voice=voice, sentence_gap_ms=220, seed=737)
+
+        def write_audio(data, file):
+            save_wav(file, data, model.sample_rate)
+    else:
+        if params["source"]:
+            sys.path.insert(0, params["source"])
+        from freyatts import FreyaTTS
+
+        model = FreyaTTS.from_pretrained(params["weights"], device=params["device"])
+
+        def speak(line):
+            return model.synthesize(line, steps=32)
+
+        write_audio = model.save_wav
     if params.get("auditions"):
         for n, line in enumerate(params["auditions"]):
-            model.save_wav(
-                model.synthesize(line, steps=32), str(Path(sys.argv[2]) / f"{n}.wav")
-            )
+            write_audio(speak(line), str(Path(sys.argv[2]) / f"{n}.wav"))
         sys.exit(0)
     if params.get("segments"):
         import numpy as np
@@ -120,10 +146,10 @@ if __name__ == "__main__":
         rate = model.sample_rate
         takes = []
         for line in params["segments"]:
-            take = model.synthesize(line, steps=32)
+            take = speak(line)
             audible = np.flatnonzero(np.abs(take) > 0.004)
             if audible.size < rate // 20:
-                raise ValueError("Silent Freya read")
+                raise ValueError("Silent narration take")
             takes.append(
                 take[max(0, audible[0] - rate // 30) : audible[-1] + rate // 12]
             )
@@ -160,5 +186,5 @@ if __name__ == "__main__":
         sample = np.concatenate(pieces)
         (Path(sys.argv[2]).parent / "timings.json").write_text(json.dumps(timings))
     else:
-        sample = model.synthesize(params["text"], steps=32)
-    model.save_wav(sample, sys.argv[2])
+        sample = speak(params["text"])
+    write_audio(sample, sys.argv[2])

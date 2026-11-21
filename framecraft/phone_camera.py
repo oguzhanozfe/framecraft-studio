@@ -45,13 +45,14 @@ def campaign(item, output, evidence, stage):
 
     beats = [7, 8, 8, 7]
     brief = {k: item[k] for k in ("name", "audience", "angle", "proof")}
+    brief["camera_setup"] = "direct_eye_level_v2"
     cache = output / "shots.json"
     if cache.is_file() and read(cache).get("phone_brief") == brief:
         plan = read(cache)
     else:
         story = ask(
             CameraPlan,
-            "Direct ONE adult recording their own vertical phone video. Keep the same handset, operator, room, wardrobe and light throughout. Write four concrete consecutive English camera actions. Begin with a reflection in which we see the creator holding the phone. Move physically to a desk-height or hands-eye view, then show a different detail from a low or overhead angle. End by moving the phone back to the creator. Explicitly describe the route and endpoints; every shot must begin where the previous ended. Four natural Turkish caption fragments and four idiomatic Turkish voice-over lines, each 7 to 12 spoken words, aligned to its action. Sell the viewer's desire using only documented facts and avoid fake testimony. Ground each line in its shot. Write numbers as spoken Turkish.",
+            "Direct ONE adult recording a vertical phone video. Start directly in the front lens at eye level, mid-reaction to the product's actual appeal. Keep the same operator, outfit, room and fixed furniture layout. Write four concrete English camera actions. For the middle beats show a plausible hand-level use and a second physical detail in that same environment. End with the creator doing the activity they wanted the product for. No mirrors, reflections of the phone, floor-level opening or aimless room tour. Describe compatible endpoints for adjacent camera moves. Four compact Turkish captions and four idiomatic Turkish voice-over lines, each 7 to 12 spoken words. Sell a specific desire using only documented facts. Ground each line in its shot. Write spoken numbers in Turkish.",
             brief,
             model_override=item.get("editor_model"),
         )
@@ -78,7 +79,7 @@ def campaign(item, output, evidence, stage):
         "project": item.get("project") or item["name"],
         "output": "master.mp4",
     }
-    if not recipe["silent"]:
+    if not recipe["silent"] and item.get("audio") != "music":
         lines = [s["narration"] for s in plan["shots"]]
         raw = output / "voice.wav"
         receipt = output / "voice.json"
@@ -86,8 +87,18 @@ def campaign(item, output, evidence, stage):
             raw.is_file()
             and receipt.is_file()
             and read(receipt).get("text") == " ".join(lines)
+            and read(receipt).get("profile", "freya")
+            == item.get("voice_profile", "freya")
         ):
-            save(receipt, synthesize(" ".join(lines), raw, segments=lines))
+            save(
+                receipt,
+                synthesize(
+                    " ".join(lines),
+                    raw,
+                    segments=lines,
+                    profile=item.get("voice_profile", "freya"),
+                ),
+            )
         voice = read(receipt)
         recipe["voice_cues"] = place_read(
             raw, output / "timed-voice.wav", voice["segments"], beats
@@ -96,12 +107,16 @@ def campaign(item, output, evidence, stage):
             voice="timed-voice.wav",
             spoken=voice["text"],
             voice_provider=voice["provider"],
+            voice_profile=voice.get("profile", "freya"),
             verify_voice_alignment=True,
         )
         if item.get("asr_model"):
             recipe["asr_model"] = str(
                 (output.parent.parent / item["asr_model"]).resolve()
             )
+    if not recipe["silent"]:
+        if item.get("audio") == "music":
+            recipe["audio_mode"] = "music"
         add_score(item, output, recipe)
     save(output / "motion.json", recipe)
     return render(recipe, output)

@@ -124,6 +124,37 @@ def test_repeat_detection_survives_codec_noise():
     assert repeated_motion(np.concatenate([original, reused]))
 
 
+def test_approved_excerpt_rejects_source_changes_and_retiming(tmp_path):
+    from framecraft.campaign_remix import approved_shot
+    from framecraft.core import save
+    import hashlib
+
+    shot = tmp_path / "raw.mp4"
+    shot.write_bytes(b"original take")
+    master = tmp_path / "old.mp4"
+    master.write_bytes(b"reviewed edit")
+    spec = tmp_path / "motion.json"
+    save(spec, {"output": master.name})
+    save(
+        tmp_path / "motion-assessment.json",
+        {
+            "passed": True,
+            "sha256": hashlib.sha256(master.read_bytes()).hexdigest(),
+            "timeline": [
+                {"source": shot.name, "from": 0, "to": 60, "source_start_seconds": 1.0}
+            ],
+        },
+    )
+    with pytest.raises(ValueError, match="within"):
+        approved_shot(spec, 0, 1.8, 0.5, tmp_path)
+    locked = approved_shot(spec, 0, 0.5, 1.0, tmp_path)
+    with pytest.raises(ValueError, match="interval"):
+        spans({"shots": [{**locked, "start": 1.6}]}, tmp_path)
+    shot.write_bytes(b"regenerated take")
+    with pytest.raises(ValueError, match="footage has changed"):
+        spans({"shots": [locked]}, tmp_path)
+
+
 def test_presenter_and_generated_take_with_different_color_metadata(tmp_path):
     import json
 
@@ -169,3 +200,20 @@ def test_presenter_and_generated_take_with_different_color_metadata(tmp_path):
     )
     result = json.loads((tmp_path / "motion-assessment.json").read_text())
     assert output.is_file() and result["passed"] and result["frames"] == 60
+    # A music-only recut at the end of a physical take must preserve the exact
+    # duration and dissolve before the incoming caption is composited.
+    shots[1]["join"] = "dissolve"
+    shots[1].update(layout="caption", headline="Cyberpunk 2077")
+    render(
+        {
+            "preview_seconds": 2,
+            "shots": shots,
+            "audio_mode": "music",
+            "score": "voice.wav",
+        },
+        tmp_path,
+    )
+    result = json.loads((tmp_path / "motion-assessment.json").read_text())
+    assert result["passed"] and result["frames"] == 60
+    assert result["joins"][0]["join"] == "dissolve"
+    assert result["voice"] is None and result["score_sha256"]
