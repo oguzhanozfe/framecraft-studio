@@ -15,7 +15,6 @@ from urllib.parse import quote
 import numpy as np
 from filelock import FileLock
 
-from .campaign_motion import render
 from .core import read, save
 from .projects import archive
 
@@ -87,6 +86,8 @@ def talking_take(folder, key):
 
 
 def edition(root, product, hook, cta):
+    from .campaign_motion import render
+
     name = product["slug"]
     folder = root / name
     speech = folder / "speech"
@@ -260,6 +261,20 @@ def export(root, catalog, destination, *, ready_only=False):
         if ready_only and not (work / "delivery.json").is_file():
             continue
         rec = read(work / "delivery.json")
+        revision = work.parent / "required-picture.json"
+        if revision.is_file():
+            approved = work.parent / read(revision)["report"]
+            audit = work / "motion-assessment.json"
+            picture = read(approved) if approved.is_file() else {}
+            used = (
+                read(audit).get("experiment", {}).get("source_picture_sha256")
+                if audit.is_file()
+                else None
+            )
+            if not picture.get("passed") or used != picture["sha256"]:
+                if ready_only:
+                    continue
+                raise ValueError(f"Pending revised product picture: {work}")
         segment_file = work.parent / "segments.json"
         if segment_file.is_file():
             segment = read(segment_file)[h]
@@ -289,6 +304,8 @@ def export(root, catalog, destination, *, ready_only=False):
     if len({x["sha256"] for x in entries}) != len(entries):
         raise ValueError("Duplicate deliverables in experiment")
     destination.mkdir(parents=True, exist_ok=True)
+    old_manifest = destination / "manifest.json"
+    previous = read(old_manifest) if old_manifest.is_file() else []
     cards = []
     with tempfile.TemporaryDirectory(dir=destination) as cur:
         stage = Path(cur)
@@ -369,6 +386,20 @@ def export(root, catalog, destination, *, ready_only=False):
         )
         for name in ("ab-testleri.csv", "manifest.json", "index.html"):
             os.replace(stage / name, destination / name)
+    listed = {row["file"] for row in entries}
+    for old in previous:
+        name = old["file"]
+        if name in listed or Path(name).name != name or not name.endswith(".mp4"):
+            continue
+        copy, archive_path = destination / name, Path(old["archive"])
+        # Withdraw only a link created from the immutable archive; keep unique local files.
+        if (
+            copy.is_file()
+            and archive_path.is_file()
+            and not archive_path.resolve().is_relative_to(destination.resolve())
+            and os.path.samefile(copy, archive_path)
+        ):
+            copy.unlink()
     return len(entries)
 
 

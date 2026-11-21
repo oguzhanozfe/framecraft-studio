@@ -65,6 +65,13 @@ def test_export_requires_two_verified_distinct_variants(tmp_path):
         export(tmp_path, catalog, dest)
     assert export(tmp_path, catalog, tmp_path / "partial", ready_only=True) == 0
     assert not list((tmp_path / "partial").glob("*.mp4"))
+    import os
+
+    was_linked = os.path.samefile(dest / "item-H1-A.mp4", rows[0]["archive"])
+    assert export(tmp_path, catalog, dest, ready_only=True) == 0
+    if was_linked:
+        assert not list(dest.glob("*.mp4"))
+    assert (tmp_path / "item/H1-C1/master.mp4").is_file()
 
 
 def test_cast_binds_measured_onset_to_picture_and_voice(tmp_path, monkeypatch):
@@ -101,3 +108,34 @@ def test_cast_binds_measured_onset_to_picture_and_voice(tmp_path, monkeypatch):
     source.write_bytes(b"b")
     assert prepare_take(*args, start=0, seconds=1)["passed"]
     assert len(renders) == 2 and output.read_bytes() == b"bface"
+
+
+def test_product_print_checks_every_decoded_frame(tmp_path, monkeypatch):
+    import gzip
+    import json
+
+    import cv2
+
+    from framecraft import campaign_print
+
+    name = "SEA SALT"
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+    reference = tmp_path / "reference.png"
+    cv2.imwrite(str(reference), image)
+    video = tmp_path / "shot.avi"
+    writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 64))
+    for _ in range(4):
+        writer.write(image)
+    writer.release()
+    results = iter((name, name, "SER SALT", name, name))
+    monkeypatch.setattr(
+        campaign_print,
+        "read_text",
+        lambda _: [{"text": next(results), "confidence": 0.99}],
+    )
+    report = tmp_path / "print.json"
+    qa = campaign_print.verify(reference, video, [name], report)
+    assert not qa["passed"] and qa["matches"][name] == 3 and qa["frames"] == 4
+    with gzip.open(tmp_path / qa["ledger"], "rt") as f:
+        rows = [json.loads(row) for row in f]
+    assert [r["frame"] for r in rows if not r["readable"][name]] == [1]
