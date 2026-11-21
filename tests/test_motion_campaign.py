@@ -17,6 +17,19 @@ def test_voice_alignment_catches_a_delayed_right_channel_and_echo():
     assert not compare(voice, mix + 0.65 * delayed[:, None])["passed"]
 
 
+def test_phone_pan_preserves_scene_structure():
+    import cv2
+    from framecraft.campaign_motion import continuous_pan
+
+    rng = np.random.default_rng(91)
+    scene = cv2.GaussianBlur(
+        rng.integers(0, 256, (180, 160), dtype=np.uint8), (3, 3), 0
+    )
+    moved = cv2.warpAffine(scene, np.float32([[1, 0, 8], [0, 1, -2]]), (160, 180))
+    assert continuous_pan(scene, moved)
+    assert not continuous_pan(scene, np.flipud(moved).copy())
+
+
 def test_camera_roll_reshoots_only_the_marked_interior(tmp_path, monkeypatch):
     import cv2
     from framecraft import phone_review

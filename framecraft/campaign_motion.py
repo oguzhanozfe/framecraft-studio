@@ -352,7 +352,10 @@ def render(recipe, folder):
             else:
                 motion_box = [0, 150, 1080, 1270]
                 scale = f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*{framing}:(ih-oh)/2"
-            vf = f"[0:v]setpts=PTS-STARTPTS,fps={FPS},{scale},setsar=1[base];"
+            conversion = f"fps={FPS}"
+            if recipe.get("phone_continuity"):
+                conversion = f"tpad=stop_mode=clone:stop_duration=0.14,minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"
+            vf = f"[0:v]setpts=PTS-STARTPTS,{conversion},{scale},setsar=1[base];"
             inset = shot.get("inset")
             extra = []
             layer = "base"
@@ -491,6 +494,39 @@ def background_key(img):
     return cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
 
 
+def continuous_pan(previous, current):
+    points = cv2.goodFeaturesToTrack(previous, 220, 0.01, 4)
+    if points is None or len(points) < 12:
+        return False
+    moved, valid, _ = cv2.calcOpticalFlowPyrLK(
+        previous, current, points, None, winSize=(31, 31), maxLevel=3
+    )
+    if moved is None or valid.sum() < 12:
+        return False
+    before, after = points[valid.ravel() == 1], moved[valid.ravel() == 1]
+    affine, support = cv2.estimateAffinePartial2D(
+        before, after, method=cv2.RANSAC, ransacReprojThreshold=2.4
+    )
+    if affine is None or support.sum() < 10 or support.mean() < 0.35:
+        return False
+    h, w = previous.shape
+    footprint = cv2.contourArea(cv2.convexHull(before[support.ravel() == 1])) / (w * h)
+    scale = np.hypot(*affine[0, :2])
+    if (
+        footprint < 0.075
+        or not 0.94 <= scale <= 1.06
+        or abs(affine[1, 0]) > 0.10
+        or abs(affine[0, 2]) > 0.11 * w
+        or abs(affine[1, 2]) > 0.11 * h
+    ):
+        return False
+    registered = cv2.warpAffine(previous, affine, (w, h))
+    mask = cv2.warpAffine(np.full_like(previous, 255), affine, (w, h)) > 250
+    before_error = np.mean(cv2.absdiff(current, previous)[mask])
+    after_error = np.mean(cv2.absdiff(current, registered)[mask])
+    return bool(after_error < 0.82 * before_error)
+
+
 def audit(path, folder, cues, recipe):
     all_failures = set()
     hashes = {}
@@ -503,6 +539,7 @@ def audit(path, folder, cues, recipe):
     last = None
     joins = []
     outgoing = None
+    last_camera = None
     near = 0
     sequence = []
     ledger = folder / "motion-frames.jsonl.gz"
@@ -565,6 +602,14 @@ def audit(path, folder, cues, recipe):
             # Exclude the static canvas surrounding a contained phone or gameplay frame.
             x0, y0, x1, y1 = cue.get("motion_box", [0, 150, 1080, 1270])
             thumb = background_key(img[y0:y1, x0:x1])
+            camera = None
+            if recipe.get("phone_continuity"):
+                camera = cv2.cvtColor(
+                    cv2.resize(
+                        img[y0:y1, x0:x1], (160, 180), interpolation=cv2.INTER_AREA
+                    ),
+                    cv2.COLOR_BGR2GRAY,
+                )
             if outgoing is not None:
                 difference = float(np.mean(cv2.absdiff(thumb, outgoing)))
                 joins.append(
@@ -575,12 +620,17 @@ def audit(path, folder, cues, recipe):
                 outgoing = None
             if last is not None:
                 step = float(np.mean(cv2.absdiff(thumb, last)))
-                if recipe.get("phone_continuity") and step > 32:
+                if (
+                    camera is not None
+                    and step > 32
+                    and not continuous_pan(last_camera, camera)
+                ):
                     flags.add("camera_jump")
                 near = near + 1 if step < 0.18 else 0
                 if near >= FPS // 2:
                     flags.add("frozen")
             last = thumb
+            last_camera = camera
             if float(thumb.std()) < 1.5:
                 flags.add("empty")
             if count % 3 == 0:

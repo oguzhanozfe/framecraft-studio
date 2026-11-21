@@ -24,6 +24,41 @@ class PhoneCheck(BaseModel):
     plausible_phone_camera: bool
 
 
+class ContinuityCheck(BaseModel):
+    visible_change: str = Field(
+        description="Describe what the same object does from left to right."
+    )
+    decisive_break: bool = Field(
+        description="True only for an identifiable impossible discontinuity in the depicted sequence."
+    )
+
+
+def verify_break(path, tiles, model):
+    cap = cv2.VideoCapture(str(path))
+    try:
+        count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fractions = np.linspace(0.03, 0.95, 8)
+        left, right = max(0, min(tiles) - 2), min(7, max(tiles))
+        rows = []
+        for position in np.linspace(fractions[left], fractions[right], 6):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, round((count - 1) * position))
+            ok, frame = cap.read()
+            if not ok:
+                raise ValueError("Could not inspect the reported continuity interval")
+            rows.append(cv2.resize(frame, (260, 462), interpolation=cv2.INTER_AREA))
+    finally:
+        cap.release()
+    sheet = np.vstack([np.hstack(rows[:3]), np.hstack(rows[3:])])
+    verdict = ask(
+        ContinuityCheck,
+        "Review these six higher-resolution frames in chronological order. Identify a specific change in phone geometry, anatomy, background position or camera location that cannot follow continuously from adjacent frames. A person can support a phone with both hands, move their fingers, go closer or leave the edges of the picture. Distinguish a demonstrably impossible cut or morph from a plausible grip or perspective change. Say what is visible. If the evidence is inconclusive set decisive_break false.",
+        {},
+        cv2.imencode(".jpg", sheet)[1].tobytes(),
+        model_override=model,
+    )
+    return verdict.model_dump()
+
+
 def inspect(path, model=None):
     cap = cv2.VideoCapture(str(path))
     try:
@@ -46,7 +81,7 @@ def inspect(path, model=None):
     sheet = np.vstack([np.hstack(tiles[:4]), np.hstack(tiles[4:])])
     jpg = cv2.imencode(".jpg", sheet)[1].tobytes()
     dest = path.with_suffix(".camera.json")
-    signature = hashlib.sha256(b"camera-continuity-2" + jpg).hexdigest()
+    signature = hashlib.sha256(b"camera-continuity-3" + jpg).hexdigest()
     if dest.is_file() and read(dest).get("signature") == signature:
         return read(dest)
     result = ask(
@@ -56,13 +91,22 @@ def inspect(path, model=None):
         jpg,
         model_override=model,
     )
+    review = None
+    if result.continuity_break_tiles and not (
+        result.sideways_tiles or result.impossible_anatomy_tiles
+    ):
+        review = verify_break(path, result.continuity_break_tiles, model)
     value = {
         **result.model_dump(),
         "signature": signature,
         "passed": not result.sideways_tiles
         and not result.impossible_anatomy_tiles
-        and not result.continuity_break_tiles
+        and (
+            not result.continuity_break_tiles
+            or bool(review and not review["decisive_break"])
+        )
         and result.plausible_phone_camera,
+        "continuity_detail": review,
     }
     save(dest, value)
     return value
