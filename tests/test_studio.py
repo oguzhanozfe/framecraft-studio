@@ -444,6 +444,30 @@ def test_caption_spelling_catches_malformed_words_and_respects_brief_terms():
     assert caption_spelling(["Try Framecraft"], "en", "Framecraft") == []
 
 
+@pytest.mark.parametrize("repaired", [True, False])
+def test_copy_editor_rechecks_model_wording_before_render(monkeypatch, repaired):
+    from framecraft import director
+
+    brief = Brief(brief="Lila bir oyuncak tanıtımı")
+    shots = [{"visual": "A lilac toy", "caption": "Yeni ürün"}]
+    attempts = []
+
+    def ask(schema, instruction, payload):
+        attempts.append(list(payload.get("words_to_rephrase", [])))
+        return schema(
+            captions=["Lila oyuncak" if repaired and attempts[-1] else "Lila oyuncakı"]
+        )
+
+    monkeypatch.setattr(director, "ask", ask)
+    if repaired:
+        director.copyedit(shots, brief)
+        assert shots[0]["caption"] == "Lila oyuncak"
+    else:
+        with pytest.raises(ValueError, match="oyuncakı"):
+            director.copyedit(shots, brief)
+    assert attempts == [[], ["Cue 1 · oyuncakı"]]
+
+
 def test_director_retries_unsupported_local_options_with_schema(monkeypatch):
     import httpx
 
