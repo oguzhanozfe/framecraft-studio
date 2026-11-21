@@ -4,6 +4,68 @@ import pytest
 from framecraft.campaign_motion import render, repeated_motion, spans
 
 
+def test_execution_timeout_starts_when_the_render_leaves_the_queue(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    import httpx
+    from framecraft import providers
+
+    clock = [0]
+    ticks = iter([100, 3550, 3650, 3700])
+
+    def respond(request):
+        path = request.url.path
+        if path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "job"})
+        if path == "/queue":
+            pending = clock[0] < 3600
+            return httpx.Response(
+                200,
+                json={
+                    "queue_pending": [[1, "job"]] if pending else [],
+                    "queue_running": [] if pending else [[1, "job"]],
+                },
+            )
+        if path == "/history/job":
+            record = {
+                "job": {
+                    "outputs": {
+                        "15": {
+                            "images": [
+                                {
+                                    "filename": "cut.mp4",
+                                    "subfolder": "video",
+                                    "type": "output",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+            return httpx.Response(200, json=record if clock[0] == 3700 else {})
+        if path == "/view":
+            return httpx.Response(200, content=b"rendered")
+        raise AssertionError(path)
+
+    client = httpx.Client(
+        base_url="http://localhost", transport=httpx.MockTransport(respond)
+    )
+    monitor = SimpleNamespace(
+        active=False,
+        close=lambda: None,
+        inspect=lambda *args: clock.__setitem__(0, next(ticks)),
+    )
+    monkeypatch.setattr(providers, "PreviewMonitor", lambda *args: monitor)
+    monkeypatch.setattr(providers, "httpx", SimpleNamespace(Client=lambda **kw: client))
+    monkeypatch.setattr(providers, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    out = tmp_path / "cut.mp4"
+    assert (
+        providers.generate("h3", "demo", 5, "vertical", out, lambda text: None) == out
+    )
+    assert out.read_bytes() == b"rendered"
+
+
 def test_voice_alignment_catches_a_delayed_right_channel_and_echo():
     from framecraft.voice_alignment import RATE, compare
 

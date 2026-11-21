@@ -312,30 +312,34 @@ def generate(
             if resp.is_error:
                 raise RuntimeError("ComfyUI rejected graph: " + resp.text[:900])
             pid = resp.json()["prompt_id"]
-            deadline = time.monotonic() + 3600
+            last_seen = time.monotonic()
+            started = None
+            next_queue = 0.0
             progress(f"{name} · render {pid}")
             next_history = 0.0
             retried_read = False
             while True:
-                if time.monotonic() >= deadline:
-                    queued = (
-                        client.get("/queue").raise_for_status().json()["queue_pending"]
-                    )
-                    if not any(row[1] == pid for row in queued):
-                        # Check history once more below, including results completed at the deadline.
-                        history = (
-                            client.get("/history/" + pid).raise_for_status().json()
-                        )
-                        if pid not in history:
-                            raise TimeoutError(
-                                "ComfyUI render exceeded one hour: " + pid
-                            )
-                    deadline = time.monotonic() + 3600
                 monitor.inspect(client, pid, progress)
-                if time.monotonic() < next_history:
+                now = time.monotonic()
+                if now < next_history:
                     continue
-                next_history = time.monotonic() + 2
+                next_history = now + 2
                 data = client.get("/history/" + pid).raise_for_status().json().get(pid)
+                if not data:
+                    if started is None and monitor.active:
+                        started = now
+                    if started is None and now >= next_queue:
+                        queue = client.get("/queue").raise_for_status().json()
+                        if any(row[1] == pid for row in queue["queue_running"]):
+                            started = now
+                        elif any(row[1] == pid for row in queue["queue_pending"]):
+                            last_seen = now
+                        elif now - last_seen >= 3600:
+                            raise TimeoutError("ComfyUI lost the queued render: " + pid)
+                        next_queue = now + 30
+                    if started is not None and now - started >= 3600:
+                        raise TimeoutError("ComfyUI render exceeded one hour: " + pid)
+                    continue
                 if data:
                     if data.get("status", {}).get("status_str") == "error":
                         errors = [
@@ -352,7 +356,11 @@ def generate(
                                 .raise_for_status()
                                 .json()["prompt_id"]
                             )
-                            deadline = time.monotonic() + 3600
+                            last_seen = time.monotonic()
+                            started = None
+                            next_queue = 0.0
+                            monitor.close()
+                            monitor = PreviewMonitor(comfy(), token, target.parent)
                             progress(f"Retrying model weight read · {pid}")
                             continue
                         raise RuntimeError("ComfyUI: " + " ".join(errors)[:800])
