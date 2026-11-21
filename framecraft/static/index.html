@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Framecraft Studio</title>
+    <link rel="stylesheet" href="/studio.css" />
+    <script src="/studio.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="#create"
+        ><i aria-hidden="true">◩</i> Framecraft <b>Studio</b></a
+      >
+      <nav>
+        <a href="#create">Üretim</a><a href="#reference">Analiz</a
+        ><a href="#jobs">Arşiv</a><a href="#settings">Bağlantılar</a>
+      </nav>
+    </header>
+    <main>
+      <div id="notice" role="status" hidden></div>
+      <section id="create">
+        <div class="intro">
+          <h1>Kreatif stüdyosu</h1>
+          <p>
+            Ürünü, kime seslendiğini ve izleyiciden beklediğin hareketi anlat.
+          </p>
+        </div>
+        <form id="briefForm" class="card">
+          <label for="brief">Kreatif brief</label
+          ><textarea
+            id="brief"
+            name="brief"
+            minlength="3"
+            maxlength="3000"
+            required
+            placeholder="Örneğin, son hamleyi oyuncuya bırakan bir mobil bulmaca oyunu. İlk saniyede tahtayı göster."
+          ></textarea>
+          <div class="grid">
+            <label
+              >Format<select name="platform">
+                <option value="vertical">Dikey · 9:16</option>
+                <option value="square">Kare · 1:1</option>
+                <option value="wide">Yatay · 16:9</option>
+              </select></label
+            ><label
+              >Yazı dili<select name="language">
+                <option value="tr">Türkçe</option>
+                <option value="en">English</option>
+              </select></label
+            ><label
+              >Varyant<input
+                name="variants"
+                type="number"
+                min="1"
+                max="10"
+                value="2" /></label
+            ><label
+              >Plan sayısı<input
+                name="shots"
+                type="number"
+                min="1"
+                max="6"
+                value="3"
+            /></label>
+          </div>
+          <details>
+            <summary>Referans ve metin tercihleri</summary>
+            <label
+              >Referans videosu<select id="refs" name="reference">
+                <option value="">Referans kullanma</option>
+              </select></label
+            ><label class="choice"
+              ><input type="checkbox" name="use_footage" />Bu çekimin gerçek
+              görüntülerini kullan (oynanış veya ürün demosu)</label
+            >
+            <div class="grid">
+              <label
+                >Açılış yazısı<input
+                  name="hook"
+                  maxlength="70"
+                  placeholder="Otomatik" /></label
+              ><label
+                >Kapanış yazısı<input
+                  name="cta"
+                  maxlength="70"
+                  placeholder="Otomatik"
+              /></label>
+            </div>
+          </details>
+          <div class="bar">
+            <small
+              >Sahne planı, model seçimi, yazılar ve kare denetimi
+              otomatik.</small
+            ><button>Üretimi başlat ↗</button>
+          </div>
+        </form>
+      </section>
+      <section id="reference" hidden>
+        <div class="intro">
+          <h1>Video analizi</h1>
+          <p>
+            Kare kare yazıları, kesmeleri ve görsel sorunları incele. Analizi
+            bir sonraki brief’te referans olarak kullanabilirsin.
+          </p>
+        </div>
+        <form id="uploadForm" class="card">
+          <label
+            >Referans video<input
+              name="video"
+              type="file"
+              accept="video/*,.mkv"
+              required
+          /></label>
+          <div class="bar">
+            <small>MP4, MOV, WebM, MKV veya AVI · 1 GiB</small
+            ><button>Analiz et ↗</button>
+          </div>
+        </form>
+      </section>
+      <section id="jobs" hidden>
+        <div class="intro"><h1>Üretim arşivi</h1></div>
+        <div id="jobList"></div>
+      </section>
+      <section id="job" hidden>
+        <a href="#jobs" class="back">← Arşiv</a>
+        <div id="jobBody"></div>
+      </section>
+      <section id="settings" hidden>
+        <div class="intro">
+          <h1>Bağlantılar</h1>
+          <p>
+            Yerel modelleri, yönetmen modelini ve yayın hesaplarını buradan
+            bağla.
+          </p>
+        </div>
+        <div class="card" id="hardware"></div>
+        <form id="settingsForm" class="card">
+          <h2>Üretim ortamı</h2>
+          <div id="settingsFields" class="grid two"></div>
+          <details>
+            <summary>Hesaplar ve API anahtarları</summary>
+            <div id="secretFields" class="grid two"></div>
+          </details>
+          <div class="bar">
+            <small
+              >Anahtarlar işletim sisteminin kimlik kasasında saklanır.</small
+            ><button>Bağlantıları kaydet</button>
+          </div>
+        </form>
+        <div class="card">
+          <h2>Yayın hesapları</h2>
+          <div class="inline">
+            <button data-connect="tiktok">TikTok ile bağlan</button
+            ><button data-connect="meta">Meta ile bağlan</button
+            ><button id="getPages">Facebook sayfası seç</button>
+          </div>
+          <div id="pages"></div>
+        </div>
+        <div class="card">
+          <h2>LoRA kataloğu</h2>
+          <form id="catalogForm" class="inline">
+            <input
+              name="q"
+              placeholder="Ör. product photography"
+              required
+            /><button>Ara</button>
+          </form>
+          <div id="catalogResults"></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

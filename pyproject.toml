@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "framecraft-studio"
+version = "0.1.0"
+description = "Local creative production with per-frame evidence, shot repair and variant selection"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx>=0.27,<1", "python-multipart>=0.0.20", "pydantic>=2.9,<3", "rapidocr-onnxruntime==1.4.4", "pillow>=10", "numpy>=1.26", "opencv-python>=4.9", "av>=14,<20", "websockets>=15,<18", "keyring>=25", "filelock>=3.13"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+speech = ["faster-whisper>=1.1"]
+
+[project.scripts]
+framecraft = "framecraft.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["framecraft*"]
+
+[tool.setuptools.package-data]
+framecraft = ["graphs/*.json","static/*"]
+
+
