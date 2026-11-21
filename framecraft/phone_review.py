@@ -18,6 +18,9 @@ class PhoneCheck(BaseModel):
     observation: str
     sideways_tiles: list[int] = Field(default_factory=list)
     impossible_anatomy_tiles: list[int] = Field(default_factory=list)
+    continuity_break_tiles: list[int] = Field(
+        description="Tiles that show a subject or background morph, impossible scene switch, or unmotivated internal cut. Empty when the view moves continuously."
+    )
     plausible_phone_camera: bool
 
 
@@ -43,7 +46,7 @@ def inspect(path, model=None):
     sheet = np.vstack([np.hstack(tiles[:4]), np.hstack(tiles[4:])])
     jpg = cv2.imencode(".jpg", sheet)[1].tobytes()
     dest = path.with_suffix(".camera.json")
-    signature = hashlib.sha256(jpg).hexdigest()
+    signature = hashlib.sha256(b"camera-continuity-2" + jpg).hexdigest()
     if dest.is_file() and read(dest).get("signature") == signature:
         return read(dest)
     result = ask(
@@ -58,6 +61,7 @@ def inspect(path, model=None):
         "signature": signature,
         "passed": not result.sideways_tiles
         and not result.impossible_anatomy_tiles
+        and not result.continuity_break_tiles
         and result.plausible_phone_camera,
     }
     save(dest, value)
@@ -66,7 +70,13 @@ def inspect(path, model=None):
 
 def patch_roll(path, report, setting, model, front=False):
     """Reshoot an interior roll between two upright frames, keeping the other action."""
-    bad = sorted(set(report["sideways_tiles"] + report["impossible_anatomy_tiles"]))
+    bad = sorted(
+        set(
+            report["sideways_tiles"]
+            + report["impossible_anatomy_tiles"]
+            + report.get("continuity_break_tiles", [])
+        )
+    )
     if not bad or min(bad) < 3 or max(bad) > 6:
         return None
     cap = cv2.VideoCapture(str(path))

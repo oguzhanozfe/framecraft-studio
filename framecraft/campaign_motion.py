@@ -574,7 +574,10 @@ def audit(path, folder, cues, recipe):
                     flags.add("camera_jump")
                 outgoing = None
             if last is not None:
-                near = near + 1 if np.mean(cv2.absdiff(thumb, last)) < 0.18 else 0
+                step = float(np.mean(cv2.absdiff(thumb, last)))
+                if recipe.get("phone_continuity") and step > 32:
+                    flags.add("camera_jump")
+                near = near + 1 if step < 0.18 else 0
                 if near >= FPS // 2:
                     flags.add("frozen")
             last = thumb
