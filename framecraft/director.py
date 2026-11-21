@@ -1,7 +1,7 @@
 import base64
 import io
 import json
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 import cv2
@@ -40,12 +40,7 @@ class Plan(BaseModel):
     shots: list[Shot]
 
 
-class DirectedShot(Shot):
-    visual: str = Field(
-        min_length=60,
-        max_length=950,
-        description="Standalone English render prompt naming the subject, camera, and one action",
-    )
+class ShotEvidence(BaseModel):
     subject_detail: str = Field(
         min_length=15,
         max_length=240,
@@ -54,9 +49,25 @@ class DirectedShot(Shot):
     checks: list[str] = Field(min_length=1, max_length=4)
 
 
-class DirectedPlan(BaseModel):
+class RenderShot(Shot):
+    visual: str = Field(
+        min_length=60,
+        max_length=950,
+        description="Standalone English render prompt naming the subject, physical features, camera, and one action",
+    )
+
+
+class DirectedShot(RenderShot, ShotEvidence):
+    pass
+
+
+class Treatment(Plan):
+    shots: list[RenderShot]
     direction: str = Field(min_length=10, max_length=1800)
     final_checks: list[str] = Field(min_length=1, max_length=5)
+
+
+class DirectedPlan(Treatment):
     shots: list[DirectedShot]
 
 
@@ -93,6 +104,10 @@ class PlanIssues(BaseModel):
     issues: list[str] = Field(
         description="Specific unmet or contradictory instructions. Empty if the proposed scenes fulfill the requested changes."
     )
+
+
+class CopyDeck(BaseModel):
+    captions: list[Annotated[str, Field(min_length=1, max_length=70)]]
 
 
 class NewVisual(BaseModel):
@@ -155,11 +170,8 @@ def revision_plan(brief, angle):
         "platform": brief.platform,
     }
     for _ in range(2):
-        result = ask(DirectedPlan, instruction, payload)
-        scenes = [
-            {"visual": s.visual, "subject_detail": s.subject_detail}
-            for s in result.shots
-        ]
+        result = ask(Treatment, instruction, payload)
+        scenes = [{"visual": s.visual} for s in result.shots]
         issues = []
         if len(scenes) != brief.shots:
             issues.append(f"Supply exactly {brief.shots} shots")
@@ -179,10 +191,33 @@ def revision_plan(brief, angle):
                 {"requested_changes": revision.changes, "scenes": scenes},
             ).issues
         if not issues:
+            shots = []
+            for shot in result.shots:
+                evidence = ask(
+                    ShotEvidence,
+                    "Derive visible acceptance checks for this single scene only. "
+                    "Describe its main subject's identifying visual features. Return short, affirmative, observable "
+                    "conditions grounded in the supplied scene. Never introduce an object, action or requirement "
+                    "that is absent from the scene description.",
+                    {"visible_scene": shot.visual},
+                )
+                shots.append({**shot.model_dump(), **evidence.model_dump()})
+            copy = ask(
+                CopyDeck,
+                "Copyedit these captions for native grammar, idiom and spelling in the requested language. "
+                "Return exactly one succinct, complete caption per shot in order. Preserve the offer and meaning. "
+                "Avoid repetition, sentence fragments that depend on a different caption, and new claims.",
+                {"language": brief.language, "captions": [s["caption"] for s in shots]},
+            )
+            if len(copy.captions) != len(shots):
+                raise ValueError("Copy editor returned an incorrect caption count")
+            for shot, caption in zip(shots, copy.captions):
+                shot["caption"] = caption
             return {
                 "director": "vision and language models",
                 "angle": angle,
                 **result.model_dump(),
+                "shots": shots,
                 "source_observations": observed.model_dump(),
                 "planning_feedback": payload.get("corrections", []),
             }
@@ -190,14 +225,14 @@ def revision_plan(brief, angle):
     raise ValueError("Revision planning checks failed: " + " / ".join(issues))
 
 
-def rewrite_shot(shot, changes, prompt, findings):
+def rewrite_shot(shot, prompt, findings):
     return ask(
         NewVisual,
         "Rewrite the failed visual prompt for a new text-to-video attempt. "
         "Use the failure evidence to change staging, camera or gesture while preserving all required "
         "checks. Describe the desired scene positively in English. Do not repeat rejected objects.",
         {
-            "changes": changes,
+            "intended_scene": shot["visual"],
             "required": shot["checks"],
             "failed_prompt": prompt,
             "observed_problems": findings,

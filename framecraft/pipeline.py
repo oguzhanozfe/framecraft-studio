@@ -115,7 +115,6 @@ def make(job):
             save(root / "ranking.json", ranking)
             continue
         save(folder / "story.json", story)
-        direction_input = brief.revision.changes if brief.revision else brief.brief
         chosen = []
         scores = []
         events = []
@@ -126,7 +125,6 @@ def make(job):
             checks = list(shot.get("checks", []))
             if shot.get("subject_detail"):
                 checks.append(shot["subject_detail"])
-                visual += " " + shot["subject_detail"]
             hint = "Clean frame. No visible writing, logos, subtitles or watermark. Natural movement, one continuous shot."
             seed = secrets.randbelow(2**31 - 1)
             for attempt in range(2):
@@ -145,7 +143,6 @@ def make(job):
                         try:
                             visual = rewrite_shot(
                                 {**shot, "checks": checks},
-                                direction_input,
                                 visual,
                                 events[-1]["blockers"],
                             )

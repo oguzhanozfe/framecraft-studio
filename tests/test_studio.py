@@ -99,9 +99,18 @@ def test_revision_director_reads_parent_and_does_not_substitute_a_template(monke
     ]
 
     def draft(schema, instruction, payload, picture=None):
+        if schema is director.CopyDeck:
+            assert payload["language"] == "tr" and payload["captions"] == ["Detay"]
+            return schema(captions=["Yakından bak"])
         if schema is director.Observation:
             return schema(
                 visible_subjects=["blue carton"], visible_actions=[], settings=[]
+            )
+        if schema is director.ShotEvidence:
+            assert payload == {"visible_scene": scenes[1]}
+            return schema(
+                subject_detail="Round blue speaker with a grille",
+                checks=["Round speaker is visible"],
             )
         if schema is director.PlanIssues:
             return schema(
@@ -129,6 +138,7 @@ def test_revision_director_reads_parent_and_does_not_substitute_a_template(monke
     monkeypatch.setattr(director, "ask", draft)
     story = director.plan(brief, "reveal", {})
     assert story["shots"][0]["visual"] == scenes[1] and story["planning_feedback"]
+    assert story["shots"][0]["caption"] == "Yakından bak"
 
 
 def test_rejected_plans_do_not_render_or_hide_the_other_variant(monkeypatch):
@@ -261,8 +271,8 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
 
     monkeypatch.setattr(pipeline, "generate", generate)
 
-    def rewrite(shot, changes, visual, findings):
-        assert "carton still visible" in findings and changes == "show the bare item"
+    def rewrite(shot, visual, findings):
+        assert "carton still visible" in findings and shot["checks"] == ["round item"]
         return "A different model-directed shot"
 
     monkeypatch.setattr(pipeline, "rewrite_shot", rewrite)
