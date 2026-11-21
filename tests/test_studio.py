@@ -294,3 +294,90 @@ def test_oauth_rejects_foreign_state(monkeypatch):
     assert "code_challenge_method=S256" in link
     with pytest.raises(ValueError, match="state mismatch"):
         accounts.finish("tiktok", state, "wrong", "unused")
+
+
+def test_compare_prioritizes_evidence_and_preserves_originals(monkeypatch):
+    from framecraft import compare as module
+
+    refs = [create_job("reference") for _ in range(2)]
+    for i, r in enumerate(refs):
+        (jobdir(r) / "input.mp4").write_bytes(bytes([i]))
+    job = create_job("compare")
+    save(
+        jobdir(job) / "comparison.json",
+        {"brief": "Puzzle board", "candidates": [{"job": r} for r in refs]},
+    )
+    monkeypatch.setattr(
+        module,
+        "audit",
+        lambda *args, **kwargs: {"score": 98, "passed": True, "blockers": []},
+    )
+    reviews = iter(
+        [
+            {"status": "assessed", "brief_fit": 40, "severe_visual_defects": []},
+            {"status": "assessed", "brief_fit": 95, "severe_visual_defects": []},
+        ]
+    )
+    monkeypatch.setattr(module, "critique", lambda *args: next(reviews))
+    module.compare(job)
+    result = read(jobdir(job) / "result.json")
+    assert result["winner"]["variant"] == 2
+    assert "Low brief alignment" in result["ranking"][1]["reasons"]
+    assert (jobdir(job) / "winner.mp4").read_bytes() == bytes([1])
+    assert (jobdir(refs[0]) / "input.mp4").read_bytes() == bytes([0])
+
+
+def test_review_grounds_alignment_in_visible_subject(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from framecraft import director
+
+    monkeypatch.setenv("FRAMECRAFT_DIRECTOR", "auto")
+    Image.new("RGB", (100, 100), "blue").save(tmp_path / "key-000000.jpg")
+    calls = []
+
+    def ask(schema, prompt, payload, picture):
+        calls.append(payload)
+        if schema is director.Observation:
+            return schema(
+                visible_subjects=["A blue square"],
+                settings=["plain background"],
+                visible_actions=["none"],
+            )
+        return schema(
+            style="minimal",
+            hook="still",
+            audience="unknown",
+            beats=[],
+            evidence=[],
+            improvements=[],
+            severe_visual_defects=[],
+            alignment="strong",
+            subject_evidence="missing",
+            action_evidence="missing",
+        )
+
+    monkeypatch.setattr(director, "ask", ask)
+    result = director.critique(
+        tmp_path, {"frequent_text": [], "shots": []}, "Show a running horse"
+    )
+    assert "brief" not in calls[0] and "independent_observations" in calls[1]
+    assert result["brief_fit"] < 55
+
+
+def test_same_campaign_review_history_does_not_double_count():
+    from framecraft.compare import record_model_reviews
+
+    job = create_job("create")
+    ranked = [
+        {
+            "source": {"job": job, "variant": 1},
+            "vision": "assessed",
+            "passed": True,
+            "score": 90,
+        }
+    ]
+    for run in ("one", "two"):
+        record_model_reviews(run, ranked)
+    rows = query("SELECT * FROM model_reviews WHERE job=?", (job,))
+    assert len(rows) == 1 and rows[0]["comparison"] == "two"

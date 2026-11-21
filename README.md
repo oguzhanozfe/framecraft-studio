@@ -2,6 +2,10 @@
 
 Local creative production for short-form video. Give Studio a brief or upload a reference. It plans shots, renders alternatives, checks decoded frames, typesets captions, and keeps a ranked cut with the evidence behind it. The browser interface is in Turkish. Briefs and captions support Turkish and English.
 
+![Four frames of a locally generated puzzle creative with typeset Turkish captions](docs/puzzle-example.webp)
+
+[Türkçe başlangıç rehberi](docs/baslangic.md) · [Research and evaluation](docs/research.md)
+
 ## Start the studio
 
 Install Python 3.11+ and FFmpeg with H.264 support. Windows users can double-click `Start-Studio.cmd` after cloning. On Linux install DejaVu Sans and a working system keyring to store account tokens, or supply credentials through environment variables.
@@ -53,6 +57,8 @@ Review the winning cut in Studio. Use **Bağlantılar** to sign in with a regist
 - **TikTok Direct Post** uses a creator token with `video.publish`, current creator settings, the selected visibility, disclosures, media consent and chunked upload. Public distribution requires TikTok client audit. [Developer guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines/)
 - **Facebook Reels** uses a Page access token and Page ID for start, upload and finish. **Meta Ads video library** uses an ads-capable token and ad account ID to upload the winning asset. Media library upload creates a video asset. Campaigns, budgets and ad sets are managed in Ads Manager. [Facebook Reels API](https://developers.facebook.com/docs/video-api/guides/reels-publishing/) · [Ad videos](https://developers.facebook.com/docs/marketing-api/reference/ad-account/advideos/)
 - Import a specific ad and reporting window from Meta Ads Insights with `ads_read`, or enter cumulative impressions, clicks and conversions for a variant. Totals replace previous observations. After 100 impressions for an angle, a smoothed click-through rate affects future angle order. This small local history can reflect audience and placement differences.
+
+The archive also accepts two to ten existing imports or exported variants for a fresh comparison against a common brief. The comparison job rechecks frames, preserves the source exports and records the score and rejection reasons for each entry.
 
 ## Agent API
 

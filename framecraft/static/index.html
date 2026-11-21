@@ -120,6 +120,16 @@
       </section>
       <section id="jobs" hidden>
         <div class="intro"><h1>Üretim arşivi</h1></div>
+        <details class="card">
+          <summary>Mevcut videoları aynı brief ile karşılaştır</summary>
+          <form id="compareForm">
+            <label
+              >Değerlendirme hedefi<input name="brief" minlength="3" required
+            /></label>
+            <div id="candidateList"></div>
+            <button>Seçili videoları karşılaştır</button>
+          </form>
+        </details>
         <div id="jobList"></div>
       </section>
       <section id="job" hidden>

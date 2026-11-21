@@ -40,6 +40,7 @@ def db():
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT, status TEXT, detail TEXT, updated REAL);
     CREATE TABLE IF NOT EXISTS takes(job TEXT, variant INTEGER, provider TEXT, angle TEXT, score REAL, passed INTEGER, seconds REAL, PRIMARY KEY(job,variant));
     CREATE TABLE IF NOT EXISTS outcomes(job TEXT, variant INTEGER, impressions INTEGER, clicks INTEGER, conversions INTEGER, PRIMARY KEY(job,variant));
+    CREATE TABLE IF NOT EXISTS model_reviews(job TEXT, variant INTEGER, comparison TEXT, score REAL, passed INTEGER, PRIMARY KEY(job,variant));
     CREATE TABLE IF NOT EXISTS deliveries(job TEXT, channel TEXT, status TEXT, remote_id TEXT, PRIMARY KEY(job,channel));
     """)
     return con

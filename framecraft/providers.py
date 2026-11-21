@@ -90,7 +90,11 @@ def inventory():
     stats = {
         row["provider"]: row
         for row in query(
-            "SELECT provider,count(*) tests,avg(score) quality,avg(passed) pass_rate,avg(seconds) seconds FROM takes GROUP BY provider"
+            """SELECT t.provider,count(*) tests,avg(coalesce(r.score,t.score)) quality,
+                      avg(coalesce(r.passed,t.passed)) pass_rate,avg(t.seconds) seconds,
+                      count(r.comparison) comparative_reviews
+               FROM takes t LEFT JOIN model_reviews r ON r.job=t.job AND r.variant=t.variant
+               GROUP BY t.provider"""
         )
     }
     choices = []
@@ -112,6 +116,13 @@ def inventory():
             else (prior * 2 + measured["quality"] * measured["tests"])
             / (2 + measured["tests"])
         )
+        if measured:
+            rating -= (
+                12
+                * (1 - measured["pass_rate"])
+                * measured["tests"]
+                / (measured["tests"] + 2)
+            )
         if not fit:
             rating -= 15
         choices.append(
@@ -124,6 +135,9 @@ def inventory():
                 if fit
                 else "offload or smaller canvas advised",
                 rank=round(rating, 2),
+                prior=prior,
+                history_delta=round(rating + (0 if fit else 15) - prior, 2),
+                hardware_delta=0 if fit else -15,
                 history=measured,
             )
         )

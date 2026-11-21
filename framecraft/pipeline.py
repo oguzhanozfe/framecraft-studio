@@ -67,6 +67,7 @@ def make(job):
     ranking = []
     angle_order = angles()
     lora = setting("H3_LORA") or None
+    triggers = ""
     if setting("AUTO_LORA") == "on" and "h3" in available:
         from .catalog import discover, install_lora
 
@@ -77,6 +78,8 @@ def make(job):
             )
             if eligible:
                 lora = install_lora(eligible["version"]).name
+                triggers = ", ".join(eligible["trigger_words"])[:300]
+                reference["adapter_prompt_examples"] = eligible["examples"]
                 save(root / "adapter.json", eligible)
         except Exception as exc:
             save(
@@ -109,7 +112,14 @@ def make(job):
                 # Prefer the same renderer for visual consistency when repairing image content.
                 if attempt and events and "error" not in events[-1]:
                     renderer = events[-1]["provider"]
-                prompt = " ".join([shot["visual"], shot.get("sound", ""), hint]).strip()
+                prompt = " ".join(
+                    [
+                        shot["visual"],
+                        shot.get("sound", ""),
+                        triggers if renderer == "h3" else "",
+                        hint,
+                    ]
+                ).strip()
                 event = {
                     "shot": si + 1,
                     "attempt": attempt + 1,

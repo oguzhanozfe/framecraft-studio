@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+from typing import Literal
 
 import httpx
 from PIL import Image, ImageDraw
@@ -37,7 +38,15 @@ class Plan(BaseModel):
     shots: list[Shot]
 
 
+class Observation(BaseModel):
+    visible_subjects: list[str]
+    settings: list[str]
+    visible_actions: list[str]
+
+
 class Review(BaseModel):
+    subject_evidence: Literal["visible", "missing", "uncertain", "unspecified"]
+    action_evidence: Literal["visible", "missing", "uncertain", "unspecified"]
     style: str
     hook: str
     audience: str
@@ -45,7 +54,7 @@ class Review(BaseModel):
     evidence: list[str]
     improvements: list[str]
     severe_visual_defects: list[str]
-    brief_fit: int = Field(ge=0, le=100)
+    alignment: Literal["strong", "partial", "weak", "unrelated"]
 
 
 def ask(schema, instruction, payload, picture=None):
@@ -92,13 +101,21 @@ def ask(schema, instruction, payload, picture=None):
                 "schema": schema.model_json_schema(),
             },
         }
-        response = client.post("chat/completions", json=request)
-        if response.status_code in (400, 422):
-            request.pop("response_format")
+        for attempt in range(2):
             response = client.post("chat/completions", json=request)
-        res = response.raise_for_status().json()
-        text = res["choices"][0]["message"]["content"]
-        return schema.model_validate_json(text[text.index("{") : text.rindex("}") + 1])
+            if response.status_code in (400, 422) and "response_format" in request:
+                request.pop("response_format")
+                response = client.post("chat/completions", json=request)
+            result = response.raise_for_status().json()["choices"][0]
+            text = result["message"].get("content") or ""
+            try:
+                return schema.model_validate_json(
+                    text[text.index("{") : text.rindex("}") + 1]
+                )
+            except ValueError:
+                if attempt:
+                    raise
+                request.update(max_tokens=2700, temperature=0.1)
 
 
 def angles():
@@ -174,13 +191,17 @@ def contact_sheet(folder):
         files[round(i * (len(files) - 1) / max(1, min(6, len(files)) - 1))]
         for i in range(min(6, len(files)))
     ]
-    sheet = Image.new("RGB", (len(chosen) * 176, 248), "#13171c")
+    cols = min(3, len(chosen))
+    sheet = Image.new(
+        "RGB", (cols * 246, ((len(chosen) + cols - 1) // cols) * 348), "#13171c"
+    )
     draw = ImageDraw.Draw(sheet)
     for i, file in enumerate(chosen):
+        x, y = (i % cols) * 246, (i // cols) * 348
         with Image.open(file) as pic:
-            pic.thumbnail((174, 220))
-            sheet.paste(pic, (176 * i + (176 - pic.width) // 2, 0))
-        draw.text((i * 176 + 6, 224), "Frame " + file.stem.split("-")[1], fill="white")
+            pic.thumbnail((242, 318))
+            sheet.paste(pic, (x + (246 - pic.width) // 2, y))
+        draw.text((x + 8, y + 321), "Frame " + file.stem.split("-")[1], fill="white")
     buf = io.BytesIO()
     sheet.save(buf, "JPEG", quality=88)
     return buf.getvalue()
@@ -191,11 +212,19 @@ def critique(folder, report, brief="", transcript_data=None):
     if not pic or setting("DIRECTOR", "auto") == "off":
         return {"status": "unavailable", "reason": "Vision director disabled"}
     try:
+        observed = ask(
+            Observation,
+            "Describe only visible pixels. For each distinct shot identify physical objects, setting and action by frame number. Ignore overlay text. Give shape, color, orientation and surface. Say unknown for an ambiguous object. Under 90 words total.",
+            {"task": "Describe the photographed scene"},
+            pic,
+        )
         result = ask(
             Review,
-            "You review ordered video keyframes for a performance marketer. Describe actual visible evidence by frame number, then infer audience, style and hook. Explain each beat and its likely purpose. Discuss what cannot be inferred. Only list severe defects for plainly visible malformed anatomy, inconsistent objects, or broken imagery. Give a brief alignment score. Reply in the brief language when clear.",
+            "You review ordered video keyframes for a performance marketer. Describe actual visible evidence by frame number, then infer audience, style and hook. Explain each beat and its likely purpose. Discuss what cannot be inferred. Only list severe defects for plainly visible malformed anatomy, inconsistent objects, or broken imagery. Use strong alignment if the subject and action match, partial if only one matches, weak for peripheral relevance, unrelated otherwise. Use an empty defect list when nothing severe is visible. Use short answers, at most three items per list. Reply in the brief language when clear.",
             {
                 "brief": brief,
+                "independent_observations": observed.model_dump(),
+                "criteria": "Check the requested subject and action against independent visual observations. Captions and generic hand movements cannot establish product identity. Mark required objects or actions missing if absent. Mark unspecified when no brief was supplied.",
                 "ocr": report["frequent_text"][:10],
                 "cuts": report["shots"][:12],
                 "sound": report.get("sound"),
@@ -203,7 +232,17 @@ def critique(folder, report, brief="", transcript_data=None):
             },
             pic,
         )
-        return {"status": "assessed", **result.model_dump()}
+        score = {"strong": 95, "partial": 70, "weak": 40, "unrelated": 10}[
+            result.alignment
+        ]
+        if brief and "missing" in (result.subject_evidence, result.action_evidence):
+            score = min(score, 40)
+        return {
+            "status": "assessed",
+            **result.model_dump(),
+            "observations": observed.model_dump(),
+            "brief_fit": score,
+        }
     except (
         ValueError,
         KeyError,

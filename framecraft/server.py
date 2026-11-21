@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import accounts, catalog, config, insights, publish
+from .compare import Comparison, compare, resolve
 from .core import Brief, create_job, home, jobdir, query, read, record, save
 from .pipeline import analyze_job, make
 from .providers import inventory
@@ -33,6 +34,8 @@ def worker(job):
     try:
         if kind == "create":
             make(job)
+        elif kind == "compare":
+            compare(job)
         elif kind == "reference":
             analyze_job(job)
         else:
@@ -369,3 +372,32 @@ def pages():
 @app.post("/api/meta/pages/{page_id}")
 def select_page(page_id: str):
     return accounts.select_page(page_id)
+
+
+@app.post("/api/compare", status_code=202)
+def compare_candidates(spec: Comparison):
+    unique = {(c.job, c.variant) for c in spec.candidates}
+    if len(unique) != len(spec.candidates):
+        raise ValueError("Choose different candidates")
+    for candidate in spec.candidates:
+        resolve(candidate)
+    return submit("compare", "comparison.json", spec.model_dump())
+
+
+@app.get("/api/candidates")
+def candidates():
+    results = []
+    for job in query(
+        "SELECT id,kind,updated FROM jobs WHERE status IN ('complete','needs_review') ORDER BY updated DESC LIMIT 100"
+    ):
+        folder = jobdir(job["id"])
+        if job["kind"] == "reference" and (folder / "input.mp4").exists():
+            results.append({**job, "variant": None})
+        elif job["kind"] == "create":
+            for row in query(
+                "SELECT variant,provider,angle FROM takes WHERE job=? ORDER BY variant",
+                (job["id"],),
+            ):
+                if (folder / f"v{row['variant']}" / "master.mp4").is_file():
+                    results.append({**job, **row})
+    return results

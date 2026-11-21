@@ -22,6 +22,7 @@ const label = {
   create: "Kreatif",
   reference: "Referans",
   install: "Kurulum",
+  compare: "Karşılaştırma",
 };
 const fields = {
   TIKTOK_CLIENT_ID: "TikTok uygulama ID",
@@ -87,6 +88,17 @@ form("#briefForm", async (f) => {
   b.shots = Number(b.shots);
   b.reference = b.reference || null;
   goJob(await api("/api/create", "POST", b));
+});
+form("#compareForm", async (f) => {
+  const candidates = f.getAll("candidate").map((value) => {
+    const [job, v] = value.split("/");
+    return { job, variant: Number(v) || null };
+  });
+  if (candidates.length < 2 || candidates.length > 10)
+    throw Error("2 ile 10 farklı video seç.");
+  goJob(
+    await api("/api/compare", "POST", { brief: f.get("brief"), candidates }),
+  );
 });
 form("#uploadForm", async (f) => goJob(await api("/api/analyze", "POST", f)));
 form("#settingsForm", async (f) => {
@@ -168,7 +180,26 @@ async function settings() {
           " · öneri " +
           m.rank +
           " · " +
-          (m.history.tests ? m.history.tests + " ölçüm" : "başlangıç tahmini") +
+          (m.history.tests
+            ? m.history.tests +
+              " deneme · ort. kalite " +
+              m.history.quality.toFixed(1) +
+              " · geçiş %" +
+              Math.round(100 * m.history.pass_rate) +
+              " · ort. " +
+              Math.round(m.history.seconds) +
+              " sn"
+            : "başlangıç tahmini") +
+          "<p>Başlangıç " +
+          m.prior +
+          " · geçmiş " +
+          (m.history_delta >= 0 ? "+" : "") +
+          m.history_delta +
+          " · donanım " +
+          m.hardware_delta +
+          " · profil " +
+          m.planning_vram_gib +
+          " GiB</p>" +
           (m.missing.length
             ? "<details><summary>Gereken dosyalar ve bileşenler</summary>" +
               esc(m.missing.join(", ")) +
@@ -329,7 +360,7 @@ async function jobView(id) {
           .join("") +
         "</div></div>"
       : "") +
-    (rank.length
+    (rank.length && j.kind === "create"
       ? '<form id="metrics" class="card"><h2>Kampanya sonucu</h2><div class="grid">' +
         ["variant", "impressions", "clicks", "conversions"]
           .map(
@@ -535,6 +566,25 @@ async function route() {
     if (page === "settings") await settings();
     if (page === "jobs" || page === "create") {
       const rows = await api("/api/jobs");
+      if (page === "jobs") {
+        const options = await api("/api/candidates");
+        $("#candidateList").innerHTML = options
+          .map(
+            (c) =>
+              '<label class="choice"><input type="checkbox" name="candidate" value="' +
+              esc(c.id) +
+              "/" +
+              (c.variant || 0) +
+              '">' +
+              esc(c.provider || "Referans") +
+              " " +
+              (c.variant ? "V" + c.variant : "") +
+              " · " +
+              new Date(c.updated * 1000).toLocaleString("tr") +
+              "</label>",
+          )
+          .join("");
+      }
       if (page === "jobs")
         $("#jobList").innerHTML =
           rows
