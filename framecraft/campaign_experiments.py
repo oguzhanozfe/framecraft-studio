@@ -100,6 +100,15 @@ def edition(root, product, hook, cta):
         key1, key2 = f"hook{hook}", f"cta{cta}"
         opening, first = talking_take(speech, key1)
         ending, last = talking_take(speech, key2)
+        for role, receipt in (("opening", first), ("closing", last)):
+            if product.get("presenter") and receipt.get("source_sha256"):
+                source = product["presenter"][role]
+                if (
+                    fingerprint(root / source["file"]) != receipt["source_sha256"]
+                    or abs(source.get("start", 0) - receipt["source_start"]) > 0.001
+                    or abs(source["seconds"] - receipt["seconds"]) > 0.001
+                ):
+                    raise ValueError(f"Presenter footage changed: {name}/{role}")
         shots = []
         for shot, cue in zip(spec["shots"], original["timeline"], strict=True):
             shot = dict(shot)
