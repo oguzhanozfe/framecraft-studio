@@ -172,6 +172,7 @@ def source_shots(item, source, output, scenes):
         raise ValueError("Six positive whole-second shots totaling 30 seconds required")
     for n, (s, duration) in enumerate(zip(scenes, durations, strict=True)):
         role = "creative" if n in (0, 5) else "demonstration"
+        publisher_shot = publisher.get("shots", {}).get(str(n + 1), {})
         supplied = item.get("shot_sources", {}).get(str(n + 1)) or (
             item.get("creator_sources", {}).get(str(n + 1))
             if role == "creative"
@@ -194,10 +195,20 @@ def source_shots(item, source, output, scenes):
                 supplied = None
         if not supplied and game and role == "demonstration":
             # Leave the title/end slates of publisher reels out of the cut.
-            start = publisher["starts"][n - 1] if publisher else 2 + sum(durations[1:n])
-            path = real
-            framing = publisher.get("framing") or (
-                "cover" if item.get("portrait_game") else "contain"
+            start = publisher_shot.get("start")
+            if start is None:
+                start = (
+                    publisher["starts"][n - 1]
+                    if publisher.get("starts")
+                    else 2 + sum(durations[1:n])
+                )
+            path = (
+                source / publisher_shot["file"] if publisher_shot.get("file") else real
+            )
+            framing = (
+                publisher_shot.get("framing")
+                or publisher.get("framing")
+                or ("cover" if item.get("portrait_game") else "contain")
             )
         elif not supplied:
             frame_folder = output / f"take-{n + 1}"
@@ -306,6 +317,11 @@ def source_shots(item, source, output, scenes):
                 "detail": (item["name"] if n == 0 and item.get("silent") else ""),
                 "eyebrow": item["name"] if n in (0, 5) else "",
                 "headline": s["label"],
+                **(
+                    {"credit": publisher_shot["credit"]}
+                    if publisher_shot.get("credit")
+                    else {}
+                ),
             }
         )
     return shots
@@ -410,6 +426,9 @@ def produce_locked(item, parent, output, stage):
     }
     if item.get("publisher_footage"):
         recipe["evidence"].append(item["publisher_footage"]["url"])
+        for view in item["publisher_footage"].get("shots", {}).values():
+            if view.get("url") and view["url"] not in recipe["evidence"]:
+                recipe["evidence"].append(view["url"])
     for source in item.get("shot_sources", {}).values():
         if (
             isinstance(source, dict)
