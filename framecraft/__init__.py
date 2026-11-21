@@ -1,1 +1,1 @@
-"""Framecraft Studio."""
+"""UGC Creator."""

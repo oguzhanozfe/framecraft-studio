@@ -7,6 +7,8 @@ build/
 .env
 .env.*
 runs/
+/projects
+/.local/
 *.mp4
 *.webm
 *.sqlite*

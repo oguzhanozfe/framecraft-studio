@@ -72,6 +72,44 @@ class DirectedPlan(Treatment):
     shots: list[DirectedShot]
 
 
+class CreativeIntent(BaseModel):
+    product_fact: str = Field(
+        min_length=5,
+        description="A product property supported by the supplied evidence",
+    )
+    audience: str = Field(
+        min_length=5,
+        description="A viewer and the situation in which this product matters",
+    )
+    desire: str = Field(
+        min_length=5, description="A specific experience the viewer wants to have"
+    )
+    opening_action: str = Field(
+        min_length=5, description="What is visibly happening in the first two seconds"
+    )
+    proof_action: str = Field(
+        min_length=5,
+        description="A visible product detail or action that earns the promise",
+    )
+
+
+class CreatorPlan(DirectedPlan):
+    intent: CreativeIntent
+
+
+class CreatorFootagePlan(Plan):
+    intent: CreativeIntent
+
+
+CREATOR_DIRECTION = (
+    "Think like the particular person who would film this on their phone. Infer a narrow audience and a "
+    "plausible desire from the brief. Show that desire in an ordinary, concrete moment in the first two seconds. "
+    "Make the product's real feature explain what the viewer sees. Keep the same person, room and lighting "
+    "across connected shots. Favor straight cuts, motivated camera moves and small spontaneous reactions. "
+    "Do not invent personal ownership, test results, scene morphs or magical product transformations. "
+)
+
+
 class Observation(BaseModel):
     visible_subjects: list[str]
     settings: list[str]
@@ -266,13 +304,19 @@ def rewrite_shot(shot, prompt, findings):
     ).visual
 
 
-def ask(schema, instruction, payload, picture=None):
+def ask(schema, instruction, payload, picture=None, *, model_override=None):
     base = setting("LLM_URL", "http://127.0.0.1:1234/v1").rstrip("/")
-    model = setting("VISION_MODEL" if picture else "LLM_MODEL") or setting("LLM_MODEL")
+    model = (
+        model_override
+        or setting("VISION_MODEL" if picture else "LLM_MODEL")
+        or setting("LLM_MODEL")
+    )
     auth = (
         {"Authorization": "Bearer " + setting("LLM_KEY")} if setting("LLM_KEY") else {}
     )
-    with httpx.Client(base_url=base + "/", headers=auth, timeout=240) as client:
+    with httpx.Client(
+        base_url=base + "/", headers=auth, timeout=float(setting("LLM_TIMEOUT", "240"))
+    ) as client:
         if not model:
             items = client.get("models", timeout=3).raise_for_status().json()["data"]
             model = next(i["id"] for i in items if "embed" not in i["id"].lower())
@@ -346,10 +390,14 @@ def plan(brief, angle, reference):
     if setting("DIRECTOR", "auto") != "off":
         try:
             result = ask(
-                Plan if brief.use_footage else DirectedPlan,
-                "You direct short social videos. Return exactly the requested number of shots. Each visual is an English T2V prompt with cast consistency, one feasible action and camera. Adapt wardrobe, location, light and performance to the product, audience and brief. Give a featured object a concrete silhouette, material, size and orientation. Distinguish the item from its container. Give each shot its own visible action. Provide short observable acceptance checks for shots and the final cut when the schema requests them. Captions must be natural in the requested language, ideally under 28 characters. Include sound direction and a short spoken line where appropriate. Use only factual claims from the brief.",
+                CreatorFootagePlan if brief.use_footage else CreatorPlan,
+                CREATOR_DIRECTION
+                + "You direct short social videos. Return exactly the requested number of shots. Each visual is an English T2V prompt with cast consistency, one feasible action and camera. Adapt wardrobe, location, light and performance to the product, audience and brief. Give a featured object a concrete silhouette, material, size and orientation. Distinguish the item from its container. Give each shot its own visible action. Provide short observable acceptance checks for shots and the final cut when the schema requests them. Captions must be natural in the requested language, ideally under 28 characters. Include sound direction and a short spoken line where appropriate. Use only factual claims from the brief.",
                 {
                     "brief": brief.brief,
+                    "known_facts": brief.facts,
+                    "audience_if_supplied": brief.audience,
+                    "silent": brief.silent,
                     "angle": angle,
                     "language": brief.language,
                     "count": brief.shots,
@@ -359,6 +407,8 @@ def plan(brief, angle, reference):
             if len(result.shots) != brief.shots:
                 raise ValueError("shot count")
             shots = result.shots
+            if isinstance(result, CreatorPlan):
+                shots[0].checks = [*shots[0].checks[:3], result.intent.opening_action]
             source = "language model"
         except (
             ValueError,
@@ -400,9 +450,15 @@ def plan(brief, angle, reference):
         "director": source,
         "angle": angle,
         **(
-            {"direction": result.direction, "final_checks": result.final_checks}
+            {
+                "direction": result.direction,
+                "final_checks": [*result.final_checks, result.intent.proof_action],
+            }
             if source == "language model" and isinstance(result, DirectedPlan)
             else {}
+        ),
+        **(
+            {"intent": result.intent.model_dump()} if source == "language model" else {}
         ),
         "shots": [s.model_dump() for s in shots],
     }

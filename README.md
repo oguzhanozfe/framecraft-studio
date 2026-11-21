@@ -1,6 +1,6 @@
-# Framecraft Studio
+# UGC Creator
 
-Local creative production for short-form video. Give Studio a brief or upload a reference. It plans shots, renders alternatives, checks decoded frames, typesets captions, and keeps a ranked cut with the evidence behind it. The browser interface is in Turkish. Briefs and captions support Turkish and English.
+A local video creator for product-aware, audience-specific UGC. Its director connects a supported product fact to a real desire, chooses an opening action and specifies the visual proof. Give Studio a brief or upload a reference. It plans shots, renders alternatives, checks decoded frames, typesets captions, and keeps a ranked cut with the evidence behind it. The browser interface is in Turkish. Briefs and captions support Turkish and English.
 
 ![Four frames of a locally generated puzzle creative with typeset Turkish captions](docs/puzzle-example.webp)
 
@@ -8,11 +8,11 @@ Local creative production for short-form video. Give Studio a brief or upload a 
 
 ## Start the studio
 
-Install Python 3.11+ and FFmpeg with H.264 support. Windows users can double-click `Start-Studio.cmd` after cloning. On Linux install DejaVu Sans and a working system keyring to store account tokens, or supply credentials through environment variables.
+Install Python 3.11+ and FFmpeg with H.264 support. Windows users can double-click `Start-UGC-Creator.cmd` after cloning. On Linux install DejaVu Sans and a working system keyring to store account tokens, or supply credentials through environment variables.
 
 ```sh
-git clone https://github.com/oguzhanozfe/framecraft-studio.git
-cd framecraft-studio
+git clone https://github.com/oguzhanozfe/ugc-creator.git
+cd ugc-creator
 python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
@@ -22,7 +22,7 @@ python -m pip install -e .
 framecraft studio
 ```
 
-Open [Studio on localhost](http://127.0.0.1:7865). **Analiz** works on CPU immediately. Upload an MP4 and open its frame evidence. Pick **Bu referansla üret** to carry its editorial breakdown into a new brief. In **Üretim**, choose an aspect ratio and up to ten variants. Each shot lasts about three seconds. The default three-shot cut runs about nine seconds. The master is 24 fps H.264 with an AAC track.
+Open [Studio on localhost](http://127.0.0.1:7865). **Analiz** works on CPU immediately. Upload an MP4 and open its frame evidence. Pick **Bu referansla üret** to carry its editorial breakdown into a new brief. In **Üretim**, choose an aspect ratio and up to ten variants. Each shot lasts about three seconds. The default three-shot cut runs about nine seconds. The Studio master uses 24 fps H.264. Silent output is selected by default in the browser.
 
 For a real game capture or product demo, select a completed reference and choose **Bu çekimin gerçek görüntülerini kullan**. Studio chooses moving sections from the supplied footage, preserves its framing, and typesets and audits the resulting cut. This mode also works without a generator.
 
@@ -75,6 +75,41 @@ framecraft create "One final puzzle move" --variants 2 --shots 2 --language en
 ```
 
 Poll `GET /api/jobs/{id}` for progress, analysis, ranking, artifact paths and delivery status. Fetch an artifact at `/api/jobs/{id}/files/{path}`. JSONL keeps timestamps for offline analysis. For CLI automation, use a separate `FRAMECRAFT_HOME` when running multiple workers on different GPUs.
+
+## Thirty-second Turkish campaigns
+
+Studio groups saved videos in **Projeler**. Give a brief a project name to keep revisions together. A completed iteration is stored at `FRAMECRAFT_HOME/projects/Project Name/Project Name - UGC 001/Project Name - UGC 001.mp4`. Open `projects/index.html` for an offline library. The same video in the same project keeps its iteration number on retry.
+
+The Studio form starts with silent video selected. For a silent campaign, set `silent: true` on the item or motion recipe. The campaign skips voice and music generation, drops source sound and checks that the final MP4 contains zero audio streams. Use `layout: "caption"` for restrained on-screen copy.
+
+Install `pip install -e '.[campaign,speech,product-stage]'`. Connect the H3 ComfyUI renderer and a local language model in Studio. The campaign runner produces vertical, 1080 × 1920, 30 fps edits. It accepts moving source footage and reference-conditioned product takes. Every source interval must be long enough for its shot and may appear only once.
+
+Create a campaign directory with a `campaign.json` manifest. For example:
+
+```json
+{"items":[{
+  "slug":"graphics-card","kind":"product","id":"B0F8KJKC9Y",
+  "name":"ASUS Dual GeForce RTX 5070 OC","audience":"1440p monitörle oynayan PC oyuncusu",
+  "angle":"Kompakt bir kasada çift fanlı kartın yerleşimini göster.",
+  "proof":"ASUS teknik sayfası iki fan ve 12 GB GDDR7 bellek bildiriyor.",
+  "limits":"Test kaynağı verilmeden performans sonucu kullanma.",
+  "gallery":[{"photo":1}],"asr_model":"models/whisper-small"
+}]}
+```
+
+Set `FRAMECRAFT_VOICE_PYTHON` to a Python interpreter with [FreyaTTS](https://github.com/freyavoiceai/FreyaTTS) and its VoxCPM AudioVAE dependencies installed. `FRAMECRAFT_FREYA_SOURCE` can point at a local Freya source checkout. `FRAMECRAFT_FREYA_MODEL` accepts a downloaded weights directory. Set `FRAMECRAFT_VOICE_DEVICE` to `cpu` to reserve VRAM for rendering.
+
+Run `framecraft-campaign PATH_TO_CAMPAIGN run`. Use `--only ITEM_SLUG` for a single cut. The `prepare` stage produces the local director's script and voice. A game item uses `kind: game` and a mobile App Store ID. Set `portrait_game` for vertical gameplay. A custom cut can supply a `motion_recipe` path relative to its item directory.
+
+A motion recipe contains a `voice` WAV and an array of `shots`. Each shot names a `file`, source `start` time and `seconds`. Optional graphic fields are `eyebrow`, `headline`, `detail` and `credit`. The shot durations must sum to thirty seconds. A `score` adds a local music file that ducks under narration. Use `python -m framecraft.campaign_score score.flac "instrumental direction"` with ComfyUI's ACE-Step 1.5 Turbo AIO checkpoint to generate an original score. Render an independent recipe with `framecraft-motion path/to/motion.json`.
+
+For a reconstructed product, `python -m framecraft.product_stage product.glb views.jpg` renders an eight-angle inspection sheet from actual geometry. Supply `--shots camera-paths.json` and an output directory to render moving camera shots. UGC Creator keeps source credits, reads text in each decoded frame, tests for repeated moving sequences and frozen images, and compares the mixed voice with the intended copy when an ASR model is configured. A passing report is bound to the MP4 by its SHA-256 digest. Source-media reuse rights require separate verification for paid distribution.
+
+For a creator-led edit, render an opening take with H3 and run `python -m framecraft.campaign_presenter cast.json yunet.onnx`. The cast plan names the `opening` video and a list of `shots` with `file`, `prompt` and `seconds`. UGC Creator finds a clear face in the opening and conditions subsequent takes on that frame. Camera direction, wardrobe and location belong in each shot prompt.
+
+To synchronize the face with recorded speech, use an isolated Python environment with PyTorch, diffusers, transformers, OpenCV and NumPy. Run `python framecraft/campaign_dub.py dub.json WEIGHTS MUSETALK_CHECKOUT`. The local weights directory contains `musetalkV15/`, `sd-vae/`, `whisper/` and `yunet.onnx`. Each entry in `clips` names its source `file`, source `start`, start on the narration `timeline`, duration in `seconds` and `output`. The top-level `voice` names the WAV. The tracker reports how many frames contain the presenter's face. See the [MuseTalk model and weight instructions](https://github.com/TMElyralab/MuseTalk).
+
+Place the synchronized takes in the motion recipe. A shot can use `layout` values `clean`, `corner`, `side`, `tag`, `metric` or `versus`. For two measured results, set `comparison` to their numeric values and include the units, test conditions and source in the text fields. Put a moving face camera or product insert in an `inset` with its own `file`, `start`, `x`, `y`, `width` and `height`. An optional `preview_seconds` renders a short audition using the same frame and audio checks. Store its recipe in a separate directory to retain the full edit's assessment.
 
 ## Development
 

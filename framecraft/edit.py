@@ -84,7 +84,9 @@ def plate(text, size, path, repair=False):
     layer.save(path)
 
 
-def render(clips, captions, shape, folder, repair=False, preserve_source=False):
+def render(
+    clips, captions, shape, folder, repair=False, preserve_source=False, silent=False
+):
     size = CANVAS[shape]
     cues = []
     parts = []
@@ -100,20 +102,33 @@ def render(clips, captions, shape, folder, repair=False, preserve_source=False):
         part = folder / f"edit-{i}.mp4"
         w, h = size
         args = ["-i", source, "-i", img]
-        if not has_audio:
+        if not has_audio and not silent:
             args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
         framing = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
         if preserve_source:
             framing = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+        audio = (
+            ["-an"]
+            if silent
+            else [
+                "-map",
+                "0:a:0" if has_audio else "2:a:0",
+                "-af",
+                "aresample=48000,apad",
+                "-c:a",
+                "aac",
+                "-ac",
+                "2",
+                "-ar",
+                "48000",
+            ]
+        )
         args += [
             "-filter_complex",
             f"[0:v]fps=24,{framing},setsar=1[b];[b][1:v]overlay=0:0[v]",
             "-map",
             "[v]",
-            "-map",
-            "0:a:0" if has_audio else "2:a:0",
-            "-af",
-            "aresample=48000,apad",
+            *audio,
             "-t",
             f"{duration:.6f}",
             "-c:v",
@@ -126,12 +141,6 @@ def render(clips, captions, shape, folder, repair=False, preserve_source=False):
             "17",
             "-pix_fmt",
             "yuv420p",
-            "-c:a",
-            "aac",
-            "-ac",
-            "2",
-            "-ar",
-            "48000",
             part,
         ]
         ffmpeg(args)

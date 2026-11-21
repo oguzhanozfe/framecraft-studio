@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Framecraft Studio</title>
+    <title>UGC Creator</title>
     <link rel="stylesheet" href="/studio.css" />
     <script src="/studio.js" defer></script>
   </head>
   <body>
     <header>
       <a class="brand" href="#create"
-        ><i aria-hidden="true">◩</i> Framecraft <b>Studio</b></a
+        ><i aria-hidden="true">◩</i> UGC <b>Creator</b></a
       >
       <nav>
         <a href="#create">Üretim</a><a href="#reference">Analiz</a
-        ><a href="#jobs">Arşiv</a><a href="#settings">Bağlantılar</a>
+        ><a href="#projects">Projeler</a><a href="#jobs">Arşiv</a><a href="#settings">Bağlantılar</a>
       </nav>
     </header>
     <main>
@@ -27,6 +27,9 @@
           </p>
         </div>
         <form id="briefForm" class="card">
+          <label for="projectName">Proje adı</label>
+          <input id="projectName" name="project" maxlength="72" placeholder="ASUS Dual RTX 5070 OC" />
+          <label class="choice"><input type="checkbox" name="silent" checked />Sessiz video</label>
           <label for="brief">Kreatif brief</label
           ><textarea
             id="brief"
@@ -65,7 +68,9 @@
             /></label>
           </div>
           <details>
-            <summary>Referans ve metin tercihleri</summary>
+            <summary>Kitle, ürün ve referans</summary>
+            <label>Kime hitap ediyor?<input name="audience" maxlength="400" /></label>
+            <label>Doğrulanmış ürün bilgileri<textarea name="facts" maxlength="1800"></textarea></label>
             <label
               >Referans videosu<select id="refs" name="reference">
                 <option value="">Referans kullanma</option>
@@ -117,6 +122,10 @@
             ><button>Analiz et ↗</button>
           </div>
         </form>
+      </section>
+      <section id="projects" hidden>
+        <h1>Projeler</h1>
+        <div id="projectList"></div>
       </section>
       <section id="jobs" hidden>
         <div class="intro"><h1>Üretim arşivi</h1></div>

@@ -148,7 +148,23 @@ def inventory():
     }
 
 
-def generate(name, prompt, seed, shape, target, progress, lora=None):
+def generate(
+    name,
+    prompt,
+    seed,
+    shape,
+    target,
+    progress,
+    lora=None,
+    *,
+    frames=73,
+    reference=None,
+    front=False,
+):
+    if reference is not None and name != "h3":
+        raise ValueError(
+            "Reference-conditioned campaign shots require the H3 ComfyUI graph"
+        )
     width, height = SIZES[shape]
     if name == "standalone":
         exe, paths = standalone_paths()
@@ -172,7 +188,7 @@ def generate(name, prompt, seed, shape, target, progress, lora=None):
             "--height",
             str(height),
             "--video-frames",
-            "73",
+            str(frames),
             "--fps",
             "24",
             "--steps",
@@ -194,7 +210,9 @@ def generate(name, prompt, seed, shape, target, progress, lora=None):
         return out
     g = template(name)
     if name == "h3":
-        g["6"]["inputs"].update(prompt=prompt, width=width, height=height, length=73)
+        g["6"]["inputs"].update(
+            prompt=prompt, width=width, height=height, length=frames
+        )
         g["10"]["inputs"]["noise_seed"] = seed
         if lora:
             g["16"] = {
@@ -212,18 +230,37 @@ def generate(name, prompt, seed, shape, target, progress, lora=None):
         g["3"]["inputs"]["text"] = (
             "unreadable lettering, deformed hands, unstable objects, overlay, watermark"
         )
-        g["5"]["inputs"].update(width=width, height=height, length=73)
+        g["5"]["inputs"].update(width=width, height=height, length=frames)
         g["6"]["inputs"]["seed"] = seed
     output = "15" if name == "h3" else "8"
     token = uuid.uuid4().hex
     g[output]["inputs"]["filename_prefix"] = "video/framecraft-" + token
     with httpx.Client(base_url=comfy(), timeout=35) as client:
+        if reference is not None:
+            with reference.open("rb") as image:
+                upload = (
+                    client.post(
+                        "/upload/image",
+                        files={
+                            "image": ("framecraft-" + token + reference.suffix, image)
+                        },
+                        data={"type": "input"},
+                    )
+                    .raise_for_status()
+                    .json()
+                )
+            name_in_comfy = "/".join(
+                filter(None, (upload.get("subfolder"), upload["name"]))
+            )
+            g["17"] = {"class_type": "LoadImage", "inputs": {"image": name_in_comfy}}
+            g["6"]["inputs"]["first_frame"] = ["17", 0]
         monitor = PreviewMonitor(comfy(), token, target.parent)
         try:
             resp = client.post(
                 "/prompt",
                 json={
                     "prompt": g,
+                    "front": front,
                     "client_id": token,
                     "extra_data": {"preview_method": "latent2rgb"},
                 },

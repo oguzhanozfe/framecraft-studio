@@ -73,7 +73,7 @@ async def lifespan(app):
         yield
 
 
-app = FastAPI(title="Framecraft Studio", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="UGC Creator", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"],
@@ -124,6 +124,30 @@ def assets(ext: str):
     if ext not in ("js", "css"):
         raise HTTPException(404)
     return FileResponse(static / ("studio." + ext))
+
+
+@app.get("/api/projects")
+def project_library():
+    from .projects import library
+
+    return library()
+
+
+@app.get("/api/projects/{name}/{number}/video")
+def project_video(name: str, number: int):
+    from .projects import editions, projects_root
+
+    root = projects_root()
+    folder = (root / name).resolve()
+    if folder.parent != root or not folder.is_dir():
+        raise HTTPException(404)
+    for edition in editions(folder):
+        if edition["number"] == number:
+            title = edition["title"]
+            file = (folder / title / (title + ".mp4")).resolve()
+            if file.is_relative_to(folder):
+                return FileResponse(file, media_type="video/mp4")
+    raise HTTPException(404)
 
 
 @app.get("/api/models")

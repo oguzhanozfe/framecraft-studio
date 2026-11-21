@@ -94,16 +94,39 @@ def audio_metrics(video, has_audio):
     return data
 
 
-def transcript(video):
-    model = setting("TRANSCRIBE_MODEL")
+def transcript(video, model=None, language=None):
+    model = model or setting("TRANSCRIBE_MODEL")
     if not model:
         return {"status": "disabled"}
     try:
         from faster_whisper import WhisperModel
 
+        audio = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(video),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-f",
+                "f32le",
+                "pipe:1",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=600,
+        )
         segments, info = WhisperModel(
-            model, device="cpu", compute_type="int8"
-        ).transcribe(str(video), vad_filter=True)
+            str(model), device="cpu", compute_type="int8", cpu_threads=4
+        ).transcribe(
+            np.frombuffer(audio.stdout, dtype="<f4"), language=language, vad_filter=True
+        )
         return {
             "status": "assessed",
             "language": info.language,
@@ -116,5 +139,11 @@ def transcript(video):
                 for s in segments
             ],
         }
-    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+    except (
+        ImportError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.SubprocessError,
+    ) as exc:
         return {"status": "unavailable", "reason": str(exc)[:250]}

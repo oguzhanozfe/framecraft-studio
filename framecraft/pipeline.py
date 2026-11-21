@@ -341,6 +341,7 @@ def make(job):
                     folder,
                     repair,
                     preserve_source=brief.use_footage,
+                    silent=brief.silent,
                 )
                 save(folder / "captions.json", cues)
                 qa = audit(
@@ -424,6 +425,8 @@ def make(job):
         shutil.copyfile(
             root / f"v{winner['variant']}" / "master.mp4", root / "winner.mp4"
         )
+        from .projects import archive
+        archive(brief.project or brief.brief[:64], root / "winner.mp4")
     save(root / "result.json", {"winner": winner, "ranking": rank})
     record(
         job,

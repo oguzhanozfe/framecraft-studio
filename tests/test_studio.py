@@ -326,7 +326,7 @@ def test_model_retry_and_final_gate(monkeypatch, final_status):
         },
     )
 
-    def render(clips, captions, shape, folder, repair, preserve_source):
+    def render(clips, captions, shape, folder, repair, preserve_source, silent=False):
         path = folder / "master.mp4"
         path.write_bytes(clips[0].read_bytes())
         return path, []
@@ -563,7 +563,7 @@ def test_metrics_affect_creative_selection():
 
 def test_local_ui_and_write_origin():
     with TestClient(app) as c:
-        assert "Framecraft" in c.get("/").text
+        assert "UGC Creator" in c.get("/").text
         assert c.get("/studio.js").status_code == 200
         assert c.post("/api/create", json={"brief": "test"}).status_code == 403
         assert (

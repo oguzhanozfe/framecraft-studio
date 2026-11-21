@@ -48,7 +48,7 @@ def main():
                         httpx.get(url + "/openapi.json", timeout=1).json()["info"][
                             "title"
                         ]
-                        == "Framecraft Studio"
+                        == "UGC Creator"
                     )
                 except (ValueError, KeyError, httpx.HTTPError):
                     return False

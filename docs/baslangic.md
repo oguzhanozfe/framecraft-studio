@@ -1,6 +1,6 @@
-# Framecraft Studio ile ilk kreatif
+# UGC Creator ile ilk kreatif
 
-Windows’ta Python 3.11 veya üstü ve FFmpeg kurulu olmalı. Repoyu indir, klasörü aç ve **Start-Studio.cmd** dosyasına çift tıkla. Stüdyo hazır olduğunda tarayıcı açılır.
+Windows’ta Python 3.11 veya üstü ve FFmpeg kurulu olmalı. Repoyu indir, klasörü aç ve **Start-UGC-Creator.cmd** dosyasına çift tıkla. Stüdyo hazır olduğunda tarayıcı açılır.
 
 1. **Analiz** sekmesinden bir ürün videosu veya oyun kaydı yükle. Her karenin zamanını, okunan yazıları, kesmeleri ve işaretlenen kusurları arşivde görebilirsin. Görsel model bağlıysa açılış, hedef kitle, planların amacı ve iyileştirme önerileri de çıkar.
 2. **Bağlantılar** bölümünde çalışan ComfyUI adresini veya bağımsız H3 kurulumunu seç. Stüdyo MiniMax H3 ve LTX 2.5 için dosyaları kontrol eder. Yerel LM Studio sunucusu veya OpenAI uyumlu bir API yönetmen ve görsel eleştirmen olarak çalışabilir.

@@ -83,6 +83,7 @@ async function form(formId, fn) {
 }
 form("#briefForm", async (f) => {
   let b = Object.fromEntries(f);
+  b.silent = f.has("silent");
   b.use_footage = f.has("use_footage");
   b.variants = Number(b.variants);
   b.shots = Number(b.shots);
@@ -630,7 +631,7 @@ let timer;
 async function route() {
   clearTimeout(timer);
   const [section = "create", id] = location.hash.slice(1).split("/"),
-    page = ["create", "reference", "jobs", "job", "settings"].includes(section)
+    page = ["create", "reference", "projects", "jobs", "job", "settings"].includes(section)
       ? section
       : "create";
   document
@@ -645,6 +646,21 @@ async function route() {
       ),
     );
   try {
+    if (page === "projects") {
+      const projects = await api("/api/projects");
+      $("#projectList").innerHTML = projects.map(project => {
+        const videos = project.editions.map((edition, i) => {
+          const url = "/api/projects/" + encodeURIComponent(project.name) + "/" + edition.number + "/video";
+          const label = edition.stage === "preview" ? " · Ön izleme" : "";
+          return '<details' + (i === 0 ? " open" : "") + '><summary>UGC ' +
+            String(edition.number).padStart(3, "0") + label +
+            '</summary><video controls playsinline preload="none" style="max-width:100%;max-height:65vh" src="' +
+            esc(url) + '"></video></details>';
+        }).join("");
+        return '<article class="card"><h2>' + esc(project.name) + '</h2>' +
+          (videos || "<p>Henüz video yok.</p>") + '</article>';
+      }).join("") || "<p>Henüz proje yok.</p>";
+    }
     if (page === "settings") await settings();
     if (page === "jobs" || page === "create") {
       const rows = await api("/api/jobs");

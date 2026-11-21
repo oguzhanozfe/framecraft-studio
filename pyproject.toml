@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "framecraft-studio"
+name = "ugc-creator"
 version = "0.1.0"
 description = "Local creative production with per-frame evidence, shot repair and variant selection"
 readme = "README.md"
@@ -13,10 +13,15 @@ dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx>=0.27,<1", "pyth
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
-speech = ["faster-whisper>=1.1"]
+speech = ["faster-whisper>=1.1", "num2words>=0.5.14,<1"]
+campaign = ["beautifulsoup4>=4.12,<5", "piper-tts>=1.3,<2"]
+product-stage = ["moderngl>=5.12,<6", "trimesh>=4.5,<6", "scipy>=1.13"]
 
 [project.scripts]
+ugc-creator = "framecraft.cli:main"
 framecraft = "framecraft.cli:main"
+framecraft-campaign = "framecraft.campaign:main"
+framecraft-motion = "framecraft.campaign_motion:main"
 
 [tool.setuptools.packages.find]
 include = ["framecraft*"]

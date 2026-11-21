@@ -17,4 +17,4 @@ An earlier evaluator that saw the brief before describing the imagery assigned a
 
 A separate existing presenter video exercised the reference path on all 88 frames. Its OCR frequently transliterated Turkish characters. Studio-authored masters additionally compare the decoded glyph pixels to the original Unicode caption plates.
 
-The original generated puzzle MP4 is attached to the [first release](https://github.com/oguzhanozfe/framecraft-studio/releases/tag/v0.1.0).
+The original generated puzzle MP4 is attached to the [first release](https://github.com/oguzhanozfe/ugc-creator/releases/tag/v0.1.0).

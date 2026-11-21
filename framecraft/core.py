@@ -27,6 +27,10 @@ class Revision(BaseModel):
 
 
 class Brief(BaseModel):
+    project: str = Field("", max_length=72)
+    silent: bool = False
+    facts: str = Field("", max_length=1800)
+    audience: str = Field("", max_length=400)
     brief: str = Field(min_length=3, max_length=3000)
     platform: Literal["vertical", "square", "wide"] = "vertical"
     language: Literal["tr", "en"] = "tr"
