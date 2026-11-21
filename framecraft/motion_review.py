@@ -2,12 +2,14 @@
 
 from pathlib import Path
 from typing import Literal
+
 import cv2
 import numpy as np
 from pydantic import BaseModel
+
+from .campaign_edit import fingerprint
 from .core import read, save
 from .director import ask
-from .campaign_edit import fingerprint
 
 
 class Inspection(BaseModel):
@@ -27,8 +29,12 @@ def reference_check(video, reference, *, model=None):
     video = Path(video)
     dest = video.with_suffix(".review.json")
     signature = (fingerprint(video), fingerprint(reference) if reference else "")
-    if dest.is_file() and read(dest).get("input") == list(signature):
-        return read(dest)
+    if dest.is_file():
+        cached = read(dest)
+        if cached.get("input") == list(signature) and (
+            cached["defect"] != "malformed_anatomy" or "anatomy_review" in cached
+        ):
+            return cached
     cap = cv2.VideoCapture(str(video))
     tiles = []
     try:
@@ -81,5 +87,34 @@ def reference_check(video, reference, *, model=None):
         model_override=model,
     )
     value = {"input": list(signature), **result.model_dump()}
+    if result.defect == "malformed_anatomy":
+        checked = ask(
+            Inspection,
+            "Inspect the visible anatomy and product in these frames. The first tile "
+            + (
+                "is the product reference."
+                if reference
+                else "is the first video sample."
+            )
+            + " Check each visible joint and limb in the remaining tiles, accounting for "
+            "foreshortening, hair, garment edges and hand occlusion. Name the specific "
+            "body part and physically impossible connection if one is visible. A real "
+            "change of product geometry or garbled writing is a separate defect. Report "
+            "the most significant defect with its tile and location. If only fabric "
+            "texture, viewing angle or slight motion blur differs, choose none.",
+            {"task": "Independent visual inspection of a proposed product take"},
+            picture,
+            model_override=model,
+        )
+        value = {
+            "input": list(signature),
+            **checked.model_dump(),
+            "anatomy_review": {
+                "initial": result.model_dump(),
+                "second": checked.model_dump(),
+            },
+        }
+    if fingerprint(video) != signature[0]:
+        raise ValueError(f"Take changed during visual review: {video}")
     save(dest, value)
     return value

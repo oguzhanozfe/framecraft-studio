@@ -118,7 +118,7 @@ Place the synchronized takes in the motion recipe. A shot can use `layout` value
 
 ### Matched creative tests
 
-Use one approved 30-second motion recipe per product. The opening and closing are direct-to-camera takes. The middle shots retain the reviewed source intervals. Each hook is paired with two different spoken and captioned calls to action. Keep the audience, opening, music and product evidence fixed within each pair.
+Use one approved 30-second motion recipe per product. The opening and closing are direct-to-camera takes. The middle shots retain the reviewed source intervals. Each hook is paired with two different spoken and captioned calls to action. Keep the audience, opening, music and product evidence fixed within each pair. An optional `segments.json` in the product directory can describe the audience and test hypothesis for each opening. Order its entries by hook and include the exact `hook_text`, `audience` and `hypothesis`.
 
 An experiment catalog contains a `products` list. Each entry names a `slug`, `project`, integer `hooks`, source `base` recipe, `score`, local Whisper directory `asr`, `voice`, and a `middle_speech` mapping of narration keys to start times in seconds. Resolve these paths relative to the catalog. Inside each slug directory, `final-copy.json` contains `hooks`, `ctas`, and the middle narration strings. The `speech` folder holds mono 24 kHz PCM16 WAVs, matching `hook0-face.mp4` and `cta0-face.mp4` takes, and corresponding `*-sync.json` measurements bound to the speech and video hashes. Use zero-based indices for the input takes.
 

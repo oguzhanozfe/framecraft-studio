@@ -260,6 +260,12 @@ def export(root, catalog, destination, *, ready_only=False):
         if ready_only and not (work / "delivery.json").is_file():
             continue
         rec = read(work / "delivery.json")
+        segment_file = work.parent / "segments.json"
+        if segment_file.is_file():
+            segment = read(segment_file)[h]
+            if segment["hook_text"] != rec["hook_text"]:
+                raise ValueError(f"Audience plan refers to a different opening: {work}")
+            rec.update(audience=segment["audience"], hypothesis=segment["hypothesis"])
         src = Path(rec["archive"])
         if (rec["slug"], rec["hook"], rec["cta"]) != (
             product["slug"],
@@ -294,6 +300,30 @@ def export(root, catalog, destination, *, ready_only=False):
             ):
                 raise ValueError(f"Invalid control pair: {slug} {h}")
             content = []
+            preview = ""
+            first_dir = root / slug / f"H{h}-C1"
+            if (first_dir / "motion-contact.jpg").is_file():
+                import cv2
+
+                preview_dir = destination / "previews"
+                preview_dir.mkdir(exist_ok=True)
+                thumbnail = preview_dir / (pair[0]["sha256"][:20] + ".jpg")
+                if not thumbnail.exists():
+                    camera = cv2.VideoCapture(pair[0]["archive"])
+                    try:
+                        camera.set(cv2.CAP_PROP_POS_MSEC, 1000)
+                        ok, frame = camera.read()
+                    finally:
+                        camera.release()
+                    if ok:
+                        thumb = cv2.resize(
+                            frame, (288, 512), interpolation=cv2.INTER_AREA
+                        )
+                        tmp = stage / thumbnail.name
+                        if cv2.imwrite(str(tmp), thumb):
+                            os.replace(tmp, thumbnail)
+                if thumbnail.is_file():
+                    preview = f' poster="previews/{thumbnail.name}"'
             for rec in pair:
                 path = Path(rec["archive"])
                 name = f"{slug}-H{h}-{'AB'[rec['cta'] - 1]}.mp4"
@@ -307,10 +337,10 @@ def export(root, catalog, destination, *, ready_only=False):
                     os.replace(tmp, dst)
                 rec["file"] = name
                 content.append(
-                    f'<article><video controls preload="none" playsinline src="{quote(name)}"></video><p>{escape(rec["cta_text"])}</p></article>'
+                    f'<article><video controls preload="none" playsinline{preview} src="{quote(name)}"></video><p><b>{"AB"[rec["cta"] - 1]}</b> · {escape(rec["cta_text"])}</p></article>'
                 )
             cards.append(
-                f"<section><h2>{escape(pair[0]['project'])} · H{h}</h2><p>{escape(pair[0]['hook_text'])}</p><div>{''.join(content)}</div></section>"
+                f"<section><h2>{escape(pair[0]['project'])} · Açılış {h}</h2><p>“{escape(pair[0]['hook_text'])}”</p><p>Hedef kitle · {escape(pair[0]['audience'])}</p><div>{''.join(content)}</div></section>"
             )
         with (stage / "ab-testleri.csv").open(
             "w", encoding="utf-8-sig", newline=""
@@ -323,6 +353,7 @@ def export(root, catalog, destination, *, ready_only=False):
                 "hook_text",
                 "cta_text",
                 "audience",
+                "hypothesis",
                 "file",
                 "sha256",
             ]
