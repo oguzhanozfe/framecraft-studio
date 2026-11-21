@@ -75,8 +75,16 @@ def test_revision_director_reads_parent_and_does_not_substitute_a_template(monke
     )
     monkeypatch.setenv("FRAMECRAFT_DIRECTOR", "auto")
 
-    def ask(schema, instruction, payload, picture):
-        assert picture.startswith(b"\xff\xd8")
+    def ask(schema, instruction, payload, picture=None):
+        if schema is director.Observation:
+            assert "changes" not in payload
+            assert picture.startswith(b"\xff\xd8")
+            return schema(
+                visible_subjects=["blue cube"], visible_actions=[], settings=[]
+            )
+        assert picture is None and payload["source_observations"][
+            "visible_subjects"
+        ] == ["blue cube"]
         assert payload["previous_direction"] == "second-generation direction"
         assert payload["changes"] == "New product shot"
         raise RuntimeError("model offline")
@@ -84,6 +92,73 @@ def test_revision_director_reads_parent_and_does_not_substitute_a_template(monke
     monkeypatch.setattr(director, "ask", ask)
     with pytest.raises(RuntimeError, match="model offline"):
         director.plan(brief, "reveal", {})
+
+    scenes = [
+        "The rectangular carton sits prominently on the desk under a reading lamp.",
+        "An unpackaged round blue speaker rotates on the wood desk in side light.",
+    ]
+
+    def draft(schema, instruction, payload, picture=None):
+        if schema is director.Observation:
+            return schema(
+                visible_subjects=["blue carton"], visible_actions=[], settings=[]
+            )
+        if schema is director.PlanIssues:
+            return schema(
+                issues=["The item is still inside its container"]
+                if "carton" in payload["scenes"][0]["visual"]
+                else []
+            )
+        revision = "corrections" in payload
+        index = int(revision)
+        if revision:
+            assert "container" in payload["corrections"][0]
+        return schema(
+            direction="Present a blue speaker",
+            final_checks=["unboxed speaker"],
+            shots=[
+                {
+                    "visual": scenes[index],
+                    "subject_detail": "Round blue speaker with a grille",
+                    "checks": ["visible subject"],
+                    "caption": "Detay",
+                }
+            ],
+        )
+
+    monkeypatch.setattr(director, "ask", draft)
+    story = director.plan(brief, "reveal", {})
+    assert story["shots"][0]["visual"] == scenes[1] and story["planning_feedback"]
+
+
+def test_rejected_plans_do_not_render_or_hide_the_other_variant(monkeypatch):
+    from framecraft.core import Revision
+
+    j = create_job("create")
+    root = jobdir(j)
+    save(
+        root / "brief.json",
+        Brief(
+            brief="previous",
+            variants=2,
+            revision=Revision(job="f" * 32, variant=1, changes="change the prop"),
+        ).model_dump(),
+    )
+    monkeypatch.setattr(
+        pipeline, "inventory", lambda: {"models": [{"id": "h3", "available": True}]}
+    )
+
+    def rejected(*args):
+        raise ValueError("Plan contradicts requested prop")
+
+    monkeypatch.setattr(pipeline, "plan", rejected)
+    monkeypatch.setattr(
+        pipeline, "generate", lambda *args: pytest.fail("rejected plan rendered")
+    )
+    pipeline.make(j)
+    ranking = read(root / "result.json")["ranking"]
+    assert len(ranking) == 2 and all(not row["passed"] for row in ranking)
+    assert all((root / f"v{i}" / "planning-error.json").is_file() for i in (1, 2))
 
 
 def test_fresh_model_generation_requires_a_director(monkeypatch):

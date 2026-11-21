@@ -89,6 +89,12 @@ class CheckedReview(Review):
     evidence_by_check: list[Evidence]
 
 
+class PlanIssues(BaseModel):
+    issues: list[str] = Field(
+        description="Specific unmet or contradictory instructions. Empty if the proposed scenes fulfill the requested changes."
+    )
+
+
 class NewVisual(BaseModel):
     visual: str = Field(min_length=8, max_length=950)
 
@@ -118,32 +124,70 @@ def revision_plan(brief, angle):
         raise ValueError(
             "Revision requires readable source frames and an enabled vision director"
         )
-    result = ask(
-        DirectedPlan,
-        "Direct a new text-to-video cut. Use the source images and previous story for continuity. "
+    observed = ask(
+        Observation,
+        "Observe the previous cut. Briefly describe visible cast, appearance, props, setting and actions. Ignore lettering.",
+        {"task": "Describe the original cut"},
+        picture,
+    )
+    instruction = (
+        "Direct a new text-to-video cut. Use the previous story and observations for continuity. "
         "The requested changes override the old creative. Translate subjective tone into visible choices "
         "in performance, styling, setting and light. Make the actual item's shape, material, scale and "
         "orientation identifiable where requested. Give each shot one feasible action, cast description, "
         "composition, and a self-contained English visual prompt. Keep rejected props out of positive prompts. "
         "Specify short observable checks for each shot and for the finished cut. Preserve the user's concrete "
         "changes in the checks. Number of shots must match count. Write natural captions in language, ideally "
-        "under 28 characters, without invented claims. Keep all fields concise.",
-        {
-            "changes": revision.changes,
-            "previous_direction": old.get("direction") or brief.brief,
-            "previous_shots": [
-                {k: s.get(k) for k in ("visual", "caption")} for s in old["shots"]
-            ],
-            "angle": angle,
-            "count": brief.shots,
-            "language": brief.language,
-            "platform": brief.platform,
-        },
-        picture,
+        "under 28 characters, without invented claims. Each shot must depict a distinct beat. Only captions "
+        "and dialogue should use the requested language. Visuals, subject details and checks should be in English. "
+        "State what is visibly in THIS shot only. Name and describe physical features of the featured subject."
     )
-    if len(result.shots) != brief.shots:
-        raise ValueError("The revision director returned the wrong number of shots")
-    return {"director": "vision model", "angle": angle, **result.model_dump()}
+    payload = {
+        "source_observations": observed.model_dump(),
+        "changes": revision.changes,
+        "previous_direction": old.get("direction") or brief.brief,
+        "previous_shots": [
+            {k: s.get(k) for k in ("visual", "caption")} for s in old["shots"]
+        ],
+        "angle": angle,
+        "count": brief.shots,
+        "language": brief.language,
+        "platform": brief.platform,
+    }
+    for _ in range(2):
+        result = ask(DirectedPlan, instruction, payload)
+        scenes = [
+            {"visual": s.visual, "subject_detail": s.subject_detail}
+            for s in result.shots
+        ]
+        issues = []
+        if len(scenes) != brief.shots:
+            issues.append(f"Supply exactly {brief.shots} shots")
+        if len({" ".join(s.visual.casefold().split()) for s in result.shots}) != len(
+            scenes
+        ):
+            issues.append(
+                "Repeated shots. Give each beat its own subject, action and camera."
+            )
+        if not issues:
+            issues = ask(
+                PlanIssues,
+                "Compare the requested changes against the proposed scenes. "
+                "List contradictions, missing requirements, or a requested separation of scenes that was lost. "
+                "A caption or the checklist is not evidence of what will be rendered. Do not object to missing captions, "
+                "audio or lettering: those are added later. Only list actual problems; return [] when the plan works.",
+                {"requested_changes": revision.changes, "scenes": scenes},
+            ).issues
+        if not issues:
+            return {
+                "director": "vision and language models",
+                "angle": angle,
+                **result.model_dump(),
+                "source_observations": observed.model_dump(),
+                "planning_feedback": payload.get("corrections", []),
+            }
+        payload.update(rejected_scenes=scenes, corrections=issues)
+    raise ValueError("Revision planning checks failed: " + " / ".join(issues))
 
 
 def rewrite_shot(shot, changes, prompt, findings):

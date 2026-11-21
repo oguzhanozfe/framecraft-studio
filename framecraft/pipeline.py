@@ -92,7 +92,28 @@ def make(job):
         folder = root / f"v{vi + 1}"
         folder.mkdir()
         progress(f"Variant {vi + 1}/{brief.variants} · storyboard")
-        story = plan(brief, angle_order[vi % len(angle_order)], reference)
+        angle = angle_order[vi % len(angle_order)]
+        try:
+            story = plan(brief, angle, reference)
+        except Exception as exc:
+            if not brief.revision:
+                raise
+            reason = str(exc)[:900] or type(exc).__name__
+            save(folder / "planning-error.json", {"reason": reason})
+            ranking.append(
+                {
+                    "variant": vi + 1,
+                    "angle": angle,
+                    "provider": "director",
+                    "score": 0,
+                    "passed": False,
+                    "reasons": [reason],
+                    "vision": "no master",
+                    "seconds": round(time.monotonic() - start, 1),
+                }
+            )
+            save(root / "ranking.json", ranking)
+            continue
         save(folder / "story.json", story)
         direction_input = brief.revision.changes if brief.revision else brief.brief
         chosen = []
