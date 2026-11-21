@@ -15,7 +15,7 @@ from .campaign_motion import render
 from .core import read, save
 from .director import CREATOR_DIRECTION, CreativeIntent, ask
 from .motion_copy import make_voice
-from .motion_review import reference_check
+from .motion_review import reference_check, repair_view
 from .providers import generate, inventory
 
 
@@ -278,6 +278,16 @@ def source_shots(item, source, output, scenes):
                     + " "
                     + checked["location"]
                 )
+                guide = ref
+                if (
+                    attempt == 1
+                    and ref
+                    and checked["defect"] in {"warped_geometry", "malformed_anatomy"}
+                ):
+                    guide = frame_folder / "repair-detail.png"
+                    revision = repair_view(
+                        ref, guide, prompt, checked, item.get("vision_model")
+                    )
                 seed = secrets.randbelow(2**31 - 1)
                 tmp = frame_folder / "take.partial.mp4"
                 generate(
@@ -288,11 +298,15 @@ def source_shots(item, source, output, scenes):
                     tmp,
                     print,
                     frames=(duration + (1 if ref else 0)) * 24 + 1,
-                    reference=ref,
+                    reference=guide,
                 )
                 tmp.replace(path)
                 info = read(receipt)
-                info.update(seed=seed, prompt=revision)
+                info.update(
+                    seed=seed,
+                    prompt=revision,
+                    repair_reference=guide.name if guide else None,
+                )
                 info.setdefault("repairs", []).append(checked)
                 save(receipt, info)
         shots.append(

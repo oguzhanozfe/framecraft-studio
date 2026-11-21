@@ -8,6 +8,15 @@ from framecraft.campaign_experiments import assemble_voice, export, matrix
 from framecraft.core import save
 
 
+def test_repeat_review_locates_both_copies_of_a_moving_sequence():
+    from framecraft.campaign_motion import repeated_windows
+
+    samples = np.arange(70, dtype=np.uint8)[:, None] * 3
+    samples[38:48] = samples[11:21]
+    assert repeated_windows(samples) == (11, 38)
+    assert repeated_windows(np.full((40, 3), 90)) is None
+
+
 def test_twelve_brands_produce_25_matched_pairs():
     products = [{"slug": str(i), "hooks": 3 if i == 0 else 2} for i in range(12)]
     variants = list(matrix(products))
@@ -139,3 +148,27 @@ def test_product_print_checks_every_decoded_frame(tmp_path, monkeypatch):
     with gzip.open(tmp_path / qa["ledger"], "rt") as f:
         rows = [json.loads(row) for row in f]
     assert [r["frame"] for r in rows if not r["readable"][name]] == [1]
+
+
+def test_reference_repair_keeps_its_crop_inside_the_catalog_photo(
+    tmp_path, monkeypatch
+):
+    import cv2
+
+    from framecraft import motion_review
+    from framecraft.core import read
+
+    photo = tmp_path / "source.png"
+    cv2.imwrite(str(photo), np.zeros((100, 60, 3), dtype=np.uint8))
+    direction = "Follow the original seam while the fabric moves gently."
+    view = motion_review.DetailView(
+        center_x=0.98, center_y=0.1, fraction=0.6, action=direction
+    )
+    monkeypatch.setattr(motion_review, "ask", lambda *args, **kwargs: view)
+    result = tmp_path / "detail.png"
+    assert (
+        motion_review.repair_view(photo, result, "Show the seam", "Strap drifted")
+        == direction
+    )
+    assert cv2.imread(str(result)).shape[:2] == (100, 60)
+    assert read(result.with_suffix(".json"))["box"] == [24, 0, 60, 60]

@@ -767,7 +767,8 @@ def audit(path, folder, cues, recipe):
             count += 1
     if count != target_frames(recipe):
         all_failures.add("frame_count")
-    if repeated_motion(thumbnails):
+    repeated = repeated_windows(thumbnails)
+    if repeated:
         all_failures.add("repeated_motion")
     levels = {"stream": False} if silent else audio_metrics(path, True)
     if not silent and (
@@ -816,6 +817,10 @@ def audit(path, folder, cues, recipe):
         "voice_profile": recipe.get("voice_profile") if with_voice else None,
         "joins": joins,
         "timeline": cues,
+        "repeated_intervals_seconds": [
+            [round(start * 3 / FPS, 3), round((start + 10) * 3 / FPS, 3)]
+            for start in (repeated or ())
+        ],
     }
     if recipe.get("score") and not silent:
         with (folder / recipe["score"]).open("rb") as score:
@@ -824,10 +829,10 @@ def audit(path, folder, cues, recipe):
     return result
 
 
-def repeated_motion(frames):
+def repeated_windows(frames):
     """Match one-second moving sequences even after re-encoding changes pixel values."""
     if len(frames) < 20:
-        return False
+        return None
     a = np.asarray(frames, dtype=np.int16).reshape(len(frames), -1)
     for end in range(19, len(a)):
         candidates = np.flatnonzero(np.abs(a[: end - 9] - a[end]).mean(axis=1) < 1.4)
@@ -837,8 +842,12 @@ def repeated_motion(frames):
                 np.abs(recent[-1] - recent[0]).mean() > 2
                 and np.abs(recent - a[prev - 9 : prev + 1]).mean() < 1.4
             ):
-                return True
-    return False
+                return prev - 9, end - 9
+    return None
+
+
+def repeated_motion(frames):
+    return repeated_windows(frames) is not None
 
 
 def main():

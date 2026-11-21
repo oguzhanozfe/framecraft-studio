@@ -138,6 +138,7 @@ def render(
     fill=0.86,
     focus=(0.0, 0.0),
     offset=0.08,
+    end_focus=None,
 ):
     stage = Stage(asset, size)
     proc = subprocess.Popen(
@@ -175,8 +176,13 @@ def render(
         for i in range(round(seconds * fps)):
             t = i / max(1, round(seconds * fps) - 1)
             angle = angles[0] + (angles[1] - angles[0]) * t
+            target = (
+                focus
+                if end_focus is None
+                else np.add(focus, t * np.subtract(end_focus, focus))
+            )
             im = stage.frame(
-                angle, elevation + 2 * t, roll + 3 * t, fill, focus, offset
+                angle, elevation + 2 * t, roll + 3 * t, fill, target, offset
             )
             proc.stdin.write(im.tobytes())
         proc.stdin.close()
