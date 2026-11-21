@@ -132,6 +132,8 @@ To check that a pair plays alike up to its closing, run `python -m framecraft.ca
 
 ### Product print
 
+To recover an authentic detail from an existing moving take, run `python -m framecraft.motion_reframe source.mp4 detail.mp4 4 "a hand choosing a blazer from the rail" --model VISION_MODEL`. The local reviewer ranks candidate views against the requested action. The selector checks continuous movement, anatomy and subject visibility and records which portion of the source it used.
+
 A close-up of a round bottle can use its original printed label. Supply a clean front photograph on white to `python -m framecraft.bottle_asset front.jpg bottle.glb` and render a shallow front camera move with `framecraft.product_stage`. This reconstruction estimates the visible circular profile. It supports front views of approximately ±15 degrees. For a shot that must keep a package phrase legible, run `python -m framecraft.campaign_print front.jpg shot.mp4 print.json "SEA SALT"`. The report and frame ledger identify which frames reproduce the reference wording.
 
 For a small inscription on a curved surface, run `python -m framecraft.reference_detail product.jpg "Brand Name" depth-small.onnx detail.glb`. The tool locates the exact words in the catalog photograph, uses the local Depth Anything model to estimate the visible surface and maps the original lettering onto that surface. Use a shallow camera orbit over the photographed side. Check the encoded result with `campaign_print --start 16 --seconds 5` and the reference, video, report and phrase arguments shown above.

@@ -4,6 +4,16 @@ import pytest
 from framecraft.campaign_motion import render, repeated_motion, spans
 
 
+def test_reframe_windows_keep_even_video_coordinates_inside_the_source():
+    from framecraft.motion_reframe import windows
+
+    options = windows(449, 801)
+    assert len(options) == len(set(options)) == 27
+    for x, y, w, h in options:
+        assert 0 <= x < x + w <= 449 and 0 <= y < y + h <= 801
+        assert all(not v % 2 for v in (x, y, w, h))
+
+
 def test_execution_timeout_starts_when_the_render_leaves_the_queue(
     tmp_path, monkeypatch
 ):
