@@ -4,19 +4,28 @@ import argparse
 import json
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 
-def measure(
-    video, audio, detector_path, model_dir, start=0.0, seconds=None, audio_start=0.0
-):
-    import python_speech_features
-    import torch
-    from scipy.ndimage import median_filter
+def _version(path):
+    path = Path(path).resolve()
+    stat = path.stat()
+    return path, stat.st_size, stat.st_mtime_ns
 
+
+def load_model(model_dir):
+    return _load_model(_version(Path(model_dir) / "syncnet_v2.model"))
+
+
+@lru_cache(maxsize=1)
+def _load_model(weights):
+    import torch
+
+    model_dir = weights[0].parent
     if str(model_dir) not in sys.path:
         sys.path.insert(0, str(model_dir))
     from SyncNetModel import S
@@ -27,7 +36,19 @@ def measure(
             model_dir / "syncnet_v2.model", map_location="cpu", weights_only=True
         )
     )
-    net.eval()
+    return net.eval()
+
+
+def tracked_mouths(video, detector_path, start, seconds):
+    # Timing and same-speaker checks inspect the very same decoded frames.
+    return _tracked_mouths(_version(video), _version(detector_path), start, seconds)
+
+
+@lru_cache(maxsize=1)
+def _tracked_mouths(video_version, detector_version, start, seconds):
+    video, detector_path = video_version[0], detector_version[0]
+    from scipy.ndimage import median_filter
+
     capture = cv2.VideoCapture(str(video))
     actual_rate = capture.get(cv2.CAP_PROP_FPS)
     if not capture.isOpened() or actual_rate <= 0:
@@ -38,7 +59,7 @@ def measure(
         seconds if seconds is not None else duration - start, duration - start
     )
     count = int(seconds * 25)
-    if start < 0 or audio_start < 0 or count < 15:
+    if start < 0 or count < 15:
         capture.release()
         raise ValueError("A speech interval of at least 0.6 seconds is required")
     detector = cv2.FaceDetectorYN.create(str(detector_path), "", (320, 320), 0.65)
@@ -71,12 +92,7 @@ def measure(
         capture.release()
     visible = [i for i, v in enumerate(boxes) if v is not None]
     if len(visible) < 0.82 * count:
-        return {
-            "passed": False,
-            "reason": "face_track",
-            "detected": len(visible),
-            "frames": count,
-        }
+        return None, len(visible), count, seconds
     track = np.stack(
         [
             np.interp(np.arange(count), visible, [boxes[i][k] for i in visible])
@@ -97,6 +113,12 @@ def measure(
             int(y - r) : int(y + 1.8 * r), int(x - 1.4 * r) : int(x + 1.4 * r)
         ]
         crops.append(cv2.resize(face, (224, 224)))
+    return crops, len(visible), count, seconds
+
+
+def read_pcm(audio, audio_start, seconds):
+    if audio_start < 0:
+        raise ValueError("Audio start must be nonnegative")
     raw = subprocess.check_output(
         [
             "ffmpeg",
@@ -118,28 +140,88 @@ def measure(
             "-",
         ]
     )
-    pcm = np.frombuffer(raw, dtype="<i2")
-    mfcc = python_speech_features.mfcc(pcm, 16000).T
-    windows = min(len(crops) - 4, (mfcc.shape[1] - 20) // 4 + 1)
-    if windows < 10:
-        raise ValueError("Too little speech for audiovisual measurement")
+    return np.frombuffer(raw, dtype="<i2")
+
+
+def visual_features(net, crops, windows):
+    import torch
+
     images = torch.from_numpy(np.stack(crops)).permute(3, 0, 1, 2)
-    speech = torch.tensor(mfcc, dtype=torch.float32)[None]
-    visual, acoustic = [], []
+    features = []
     with torch.inference_mode():
         for first in range(0, windows, 8):
             indices = range(first, min(first + 8, windows))
-            visual.append(
+            features.append(
                 net.forward_lip(
                     torch.stack([images[:, i : i + 5] for i in indices]).float()
                 )
             )
-            acoustic.append(
+    return torch.cat(features)
+
+
+def acoustic_features(net, pcm, max_windows):
+    import python_speech_features
+    import torch
+
+    mfcc = python_speech_features.mfcc(pcm, 16000).T
+    windows = min(max_windows, (mfcc.shape[1] - 20) // 4 + 1)
+    if windows < 10:
+        raise ValueError("Too little speech for audiovisual measurement")
+    speech = torch.tensor(mfcc, dtype=torch.float32)[None]
+    features = []
+    with torch.inference_mode():
+        for first in range(0, windows, 8):
+            indices = range(first, min(first + 8, windows))
+            features.append(
                 net.forward_aud(
                     torch.stack([speech[:, :, 4 * i : 4 * i + 20] for i in indices])
                 )
             )
-    vis, sound = torch.cat(visual), torch.cat(acoustic)
+    return torch.cat(features)
+
+
+def observed_features(video, audio, detector, model_dir, start, seconds, audio_start):
+    """Encode one exact interval once for timing and counterfactual comparisons."""
+    return _observed_features(
+        _version(video),
+        _version(audio),
+        _version(detector),
+        _version(Path(model_dir) / "syncnet_v2.model"),
+        start,
+        seconds,
+        audio_start,
+    )
+
+
+@lru_cache(maxsize=1)
+def _observed_features(video, audio, detector, weights, start, seconds, audio_start):
+    crops, visible, count, duration = tracked_mouths(
+        video[0], detector[0], start, seconds
+    )
+    if crops is None:
+        return None, None, None, visible, count, duration
+    net = load_model(weights[0].parent)
+    pcm = read_pcm(audio[0], audio_start, duration)
+    sound = acoustic_features(net, pcm, len(crops) - 4)
+    return visual_features(net, crops, len(sound)), sound, pcm, visible, count, duration
+
+
+def measure(
+    video, audio, detector_path, model_dir, start=0.0, seconds=None, audio_start=0.0
+):
+    import torch
+
+    vis, sound, pcm, visible, count, seconds = observed_features(
+        video, audio, detector_path, model_dir, start, seconds, audio_start
+    )
+    if vis is None:
+        return {
+            "passed": False,
+            "reason": "face_track",
+            "detected": visible,
+            "frames": count,
+        }
+    windows = len(sound)
     # Compare the same speaking windows for every lag, excluding silence and padded edges.
     radius = min(8, (windows - 8) // 2)
     candidates = np.arange(radius, windows - radius)
@@ -171,7 +253,7 @@ def measure(
         "offset_ms": offset * 40,
         "confidence": round(confidence, 3),
         "voiced_windows": len(active),
-        "face_frames": len(visible),
+        "face_frames": visible,
         "frames": count,
         "distances": [round(d, 3) for d in dist],
     }

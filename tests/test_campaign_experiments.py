@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from framecraft.campaign_experiments import assemble_voice, export, matrix
+from framecraft.campaign_face_integrity import FACE_INTEGRITY_VERSION
 from framecraft.core import save
 
 
@@ -169,11 +170,32 @@ def test_export_requires_two_verified_distinct_variants(tmp_path):
             "sha256": sig,
         }
         save(folder / "delivery.json", row)
-        save(folder / "final-lips.json", {"passed": True, "sha256": sig})
+        checks = {
+            "opening": {"passed": True, "version": FACE_INTEGRITY_VERSION},
+            "closing": {"passed": True, "version": FACE_INTEGRITY_VERSION},
+        }
+        save(
+            folder / "final-lips.json",
+            {
+                "version": 2,
+                "passed": True,
+                "sha256": sig,
+                "articulation": checks,
+                "spoken_identity": checks,
+                "face_integrity": checks,
+            },
+        )
         rows.append(row)
     dest = tmp_path / "package"
     assert export(tmp_path, catalog, dest) == 2
     assert len(list(dest.glob("*.mp4"))) == 2
+    save(
+        tmp_path / "item/H1-C2/final-lips.json",
+        {"passed": True, "sha256": rows[1]["sha256"]},
+    )
+    with pytest.raises(ValueError, match="audiovisual"):
+        export(tmp_path, catalog, dest)
+
     save(
         tmp_path / "item" / "H1-C2" / "final-lips.json",
         {"passed": False, "sha256": rows[1]["sha256"]},
@@ -218,6 +240,16 @@ def test_cast_binds_measured_onset_to_picture_and_voice(tmp_path, monkeypatch):
         return {"passed": lag == 0, "offset_ms": lag, "confidence": 1.1}
 
     monkeypatch.setattr(campaign_sync, "measure", measure)
+    from framecraft import campaign_face_integrity, campaign_speech_review
+
+    monkeypatch.setattr(
+        campaign_speech_review, "review", lambda *a, **kw: {"passed": True}
+    )
+    monkeypatch.setattr(
+        campaign_face_integrity,
+        "assess",
+        lambda *a, **kw: {"passed": True, "version": FACE_INTEGRITY_VERSION},
+    )
     args = (Network(), source, audio, output, tmp_path, tmp_path)
     assert prepare_take(*args, start=0, seconds=1)["voice_onset"] == 0.37
     assert prepare_take(*args, start=0, seconds=1)["offset_ms"] == 0
@@ -280,3 +312,133 @@ def test_reference_repair_keeps_its_crop_inside_the_catalog_photo(
     )
     assert cv2.imread(str(result)).shape[:2] == (100, 60)
     assert read(result.with_suffix(".json"))["box"] == [24, 0, 60, 60]
+
+
+def test_candidate_with_the_wrong_timed_wav_is_rejected(tmp_path):
+    from framecraft.campaign_cast import adopt_candidate, digest, voice_bed
+
+    actor, candidate = tmp_path / "actor.mp4", tmp_path / "candidate.mp4"
+    actor.write_bytes(b"original")
+    candidate.write_bytes(b"candidate")
+    voice = tmp_path / "hook0.wav"
+    with wave.open(str(voice), "wb") as out:
+        out.setparams((1, 2, 24000, 0, "NONE", ""))
+        out.writeframes(np.full(2400, 1500, dtype="<i2").tobytes())
+    bed = tmp_path / "timed.wav"
+    voice_bed(voice, bed, 1, 0.4)
+    save(
+        candidate.with_suffix(".json"),
+        {
+            "source_sha256": digest(actor),
+            "audio_sha256": digest(voice),
+            "video_sha256": digest(candidate),
+            "voice_onset": 0.25,
+            "seconds": 1,
+        },
+    )
+    acquittal = tmp_path / "physical.json"
+    save(
+        acquittal,
+        {"passed": True, "sha256": digest(candidate), "bed_sha256": digest(bed)},
+    )
+    with pytest.raises(ValueError, match="recorded line or onset"):
+        adopt_candidate(actor, tmp_path, "hook0", candidate, acquittal, bed, None, None)
+
+
+def test_export_uses_the_current_speaking_take(tmp_path):
+    from framecraft.campaign_experiments import current_takes
+
+    speech = tmp_path / "speech"
+    work = tmp_path / "H1-C1"
+    speech.mkdir()
+    work.mkdir()
+    good = {"passed": True, "video_sha256": "same"}
+    save(
+        work / "motion-assessment.json",
+        {"lip_sync": {"opening": good, "closing": good}},
+    )
+    save(speech / "hook0-sync.json", good)
+    save(speech / "cta0-sync.json", good)
+    assert current_takes(work, 0, 0)
+    save(speech / "cta0-sync.json", {**good, "video_sha256": "replacement"})
+    assert not current_takes(work, 0, 0)
+
+
+def test_running_render_keeps_signed_bytes_after_new_cast(tmp_path):
+    from framecraft.campaign_experiments import fingerprint, talking_take
+
+    face = tmp_path / "cta0-face.mp4"
+    wav = tmp_path / "cta0.wav"
+    wav.write_bytes(b"voice")
+
+    def select(data):
+        stage = tmp_path / "new.mp4"
+        stage.write_bytes(data)
+        stage.replace(face)
+        save(
+            tmp_path / "cta0-sync.json",
+            {
+                "passed": True,
+                "video_sha256": fingerprint(face),
+                "audio_sha256": fingerprint(wav),
+            },
+        )
+        return talking_take(tmp_path, "cta0")[0]
+
+    first, second = select(b"first take"), select(b"second take")
+    assert first != second
+    assert first.read_bytes() == b"first take"
+    assert second.read_bytes() == b"second take"
+
+
+@pytest.mark.parametrize("passes_timing", [True, False])
+def test_original_lip_texture_is_rechecked_against_real_speech(
+    tmp_path, monkeypatch, passes_timing
+):
+    from framecraft import (
+        campaign_face_integrity,
+        campaign_lip_composite,
+        campaign_speech_review,
+        campaign_sync,
+    )
+    from framecraft.campaign_cast import checked_picture
+
+    original = tmp_path / "camera.mp4"
+    generated = tmp_path / "performance.mp4"
+    voice = tmp_path / "dialogue.wav"
+    compared = []
+
+    def assess(source, video, **kwargs):
+        assert source == original
+        return {
+            "passed": video != generated,
+            "failure_times": [0.63] if video == generated else [],
+        }
+
+    def physical(video, bed, **kwargs):
+        assert bed == voice
+        compared.append(video.name)
+        return {"passed": True}
+
+    def restore(source, candidate, output, **kwargs):
+        assert (source, candidate) == (original, generated)
+        output.write_bytes(b"restored")
+
+    monkeypatch.setattr(campaign_face_integrity, "assess", assess)
+    monkeypatch.setattr(campaign_speech_review, "review", physical)
+    monkeypatch.setattr(campaign_lip_composite, "render", restore)
+    monkeypatch.setattr(
+        campaign_sync, "measure", lambda *a, **kw: {"passed": passes_timing}
+    )
+    args = (original, generated, voice, None, None, 0.0, 2.0, "bak", {"passed": True})
+    if passes_timing:
+        result, shape, timing, skin = checked_picture(*args)
+        assert result.read_bytes() == b"restored" and all(
+            x["passed"] for x in (shape, timing, skin)
+        )
+    else:
+        with pytest.raises(
+            ValueError, match="changed the recorded articulation or timing"
+        ):
+            checked_picture(*args)
+    assert compared == ["performance.mp4", "original-lip-texture.mp4"]

@@ -13,8 +13,23 @@ import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel
 from transformers import WhisperFeatureExtractor, WhisperModel
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from framecraft.campaign_face import (
+    face_boxes,
+    lip_mask,
+    lower_mask,
+    rest_crop,
+    resting_references,
+    speech_activity,
+    track,
+)
+
 
 class Dubber:
+    cache_version = "registered-jaw-v3"
+
     def __init__(self, weights, source, device="cuda"):
         sys.path.insert(0, str(source))
         from musetalk.models.unet import PositionalEncoding
@@ -23,9 +38,6 @@ class Dubber:
         self.device = "cuda" if stream_weights else device
         weight_device = "cpu" if stream_weights else self.device
         self.dtype = torch.float16 if device.startswith("cuda") else torch.float32
-        self.yunet = cv2.FaceDetectorYN.create(
-            str(weights / "yunet.onnx"), "", (320, 320), 0.67
-        )
         with torch.device("meta"):
             self.net = UNet2DConditionModel.from_config(
                 json.loads((weights / "musetalkV15/musetalk.json").read_text())
@@ -89,28 +101,6 @@ class Dubber:
             ]
         )
 
-    def landmarks(self, img):
-        h, w = img.shape[:2]
-        self.yunet.setInputSize((w, h))
-        _, faces = self.yunet.detect(img)
-        if faces is None or len(faces) != 1:
-            return None
-        x, y, fw, fh = faces[0, :4]
-        eyes = faces[0, 4:8].reshape(2, 2)
-        nose = faces[0, 8:10]
-        mouth = faces[0, 10:14].reshape(2, 2).mean(axis=0)
-        center = 0.63 * nose[1] + 0.37 * eyes[:, 1].mean()
-        chin = y + fh
-        return np.array(
-            [
-                max(0, x - 0.025 * fw),
-                max(0, 2 * center - chin),
-                min(w, x + fw * 1.025),
-                min(h, chin + 0.05 * fh),
-                *mouth,
-            ]
-        )
-
     @torch.inference_mode()
     def run(
         self,
@@ -129,7 +119,6 @@ class Dubber:
         count = math.ceil(length * fps - 1e-6)
         cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
         frames = []
-        boxes = []
         try:
             for _ in range(count):
                 ok, im = cap.read()
@@ -138,25 +127,12 @@ class Dubber:
                         "Presenter source cannot cover the requested continuous interval"
                     )
                 frames.append(im)
-                boxes.append(self.landmarks(im))
         finally:
             cap.release()
-        good = [i for i, b in enumerate(boxes) if b is not None]
-        if len(good) < count * 0.82:
-            raise ValueError(f"Face visible in only {len(good)}/{count} frames")
-        coords = np.stack(
-            [
-                np.interp(np.arange(count), good, [boxes[i][k] for i in good])
-                for k in range(6)
-            ],
-            axis=1,
-        )
-        smooth = np.stack(
-            [
-                np.median(coords[max(0, i - 2) : min(count, i + 3)], axis=0)
-                for i in range(count)
-            ]
-        )
+        h, w = frames[0].shape[:2]
+        mesh = track(src, start, count)
+        boxes = face_boxes(mesh, w, h)
+        references = resting_references(mesh)
         # Use the exact audio interval that will reach the final edit, including the initial music lead-in.
         raw = subprocess.check_output(
             [
@@ -184,17 +160,9 @@ class Dubber:
         )
         signal = np.frombuffer(raw, dtype="<f4").copy()
         features = self.prompts(signal, count, fps)
-        envelope = np.ones(count, dtype=np.float32)
-        if speech_only:
-            loud = np.flatnonzero(np.abs(signal) > 0.012)
-            if len(loud) < 100:
-                raise ValueError("A talking take needs audible speech")
-            onset, end = (loud[[0, -1]] / 16000) * fps
-            positions = np.arange(count)
-            envelope = np.clip(
-                np.minimum(positions - onset + 3, end - positions + 3) / 2, 0, 1
-            )
-        h, w = frames[0].shape[:2]
+        envelope = speech_activity(signal, count, fps)
+        if speech_only and not np.any(envelope):
+            raise ValueError("A talking take needs audible speech")
         proc = subprocess.Popen(
             [
                 "ffmpeg",
@@ -230,33 +198,46 @@ class Dubber:
         deltas = []
         try:
             for offset in range(0, count, batch):
-                if not np.any(envelope[offset : offset + batch]):
-                    for original in frames[offset : offset + batch]:
-                        proc.stdin.write(original.tobytes())
-                    continue
-                crops = []
-                regions = []
+                crops, conditioning, reference_surfaces, masks = [], [], [], []
                 for i in range(offset, min(count, offset + batch)):
-                    x, y, r, b, mx, my = smooth[i].round().astype(int)
+                    x, y, r, b = boxes[i]
+                    original = frames[i][y:b, x:r]
+                    mask = lower_mask(mesh[i], boxes[i])
+                    rest = rest_crop(frames, mesh, i, references[i], boxes[i])
+                    local_mask = lip_mask(mesh[i], boxes[i])
+                    neutral = np.rint(
+                        rest * local_mask + original * (1 - local_mask)
+                    ).astype("uint8")
                     crops.append(
                         cv2.resize(
-                            frames[i][y:b, x:r],
-                            (256, 256),
-                            interpolation=cv2.INTER_LANCZOS4,
+                            original, (256, 256), interpolation=cv2.INTER_LANCZOS4
                         )[:, :, ::-1]
                     )
-                    regions.append((x, y, r, b, mx, my))
-                rgb = (
-                    torch.from_numpy(np.stack(crops))
-                    .permute(0, 3, 1, 2)
-                    .to(self.device, self.dtype)
-                    / 127.5
-                    - 1
-                )
+                    conditioning.append(
+                        cv2.resize(
+                            neutral, (256, 256), interpolation=cv2.INTER_LANCZOS4
+                        )[:, :, ::-1]
+                    )
+                    masks.append(mask)
+                    reference_surfaces.append(neutral)
+
+                def tensor(images):
+                    return (
+                        torch.from_numpy(np.stack(images))
+                        .permute(0, 3, 1, 2)
+                        .to(self.device, self.dtype)
+                        / 127.5
+                        - 1
+                    )
+
+                rgb = tensor(crops)
+                reference_rgb = tensor(conditioning)
                 masked = rgb.clone()
                 masked[:, :, 128:, :] = -1.0
                 z = (
-                    self.vae.encode(torch.cat([masked, rgb])).latent_dist.mode()
+                    self.vae.encode(
+                        torch.cat([masked, reference_rgb])
+                    ).latent_dist.mode()
                     * self.vae.config.scaling_factor
                 )
                 za, zb = z.chunk(2)
@@ -276,7 +257,7 @@ class Dubber:
                     .numpy()
                     .astype("uint8")
                 )
-                for k, (x, y, r, b, mx, my) in enumerate(regions):
+                for k, (x, y, r, b) in enumerate(boxes[offset : offset + len(crops)]):
                     original = frames[offset + k]
                     surface = original[y:b, x:r]
                     patch = cv2.resize(
@@ -284,22 +265,12 @@ class Dubber:
                         (r - x, b - y),
                         interpolation=cv2.INTER_CUBIC,
                     )
-                    hh, ww = surface.shape[:2]
-                    mask = np.zeros((hh, ww), np.float32)
-                    cv2.ellipse(
-                        mask,
-                        (mx - x, my - y + round(hh * 0.024)),
-                        (max(2, round(ww * 0.30)), max(2, round(hh * 0.17))),
-                        0,
-                        0,
-                        360,
-                        1.0,
-                        -1,
-                    )
-                    mask = cv2.GaussianBlur(mask, (0, 0), max(1, ww * 0.034))[
-                        :, :, None
-                    ]
-                    mask *= envelope[offset + k]
+                    mask = masks[k]
+                    # The trained model drives the jaw while speaking. In extended
+                    # silence use the same presenter's registered listening expression.
+                    weight = envelope[offset + k]
+                    if references[offset + k] >= 0 and weight < 1.0:
+                        patch = patch * weight + reference_surfaces[k] * (1.0 - weight)
                     result = original.copy()
                     result[y:b, x:r] = np.rint(
                         patch * mask + surface * (1 - mask)
@@ -325,7 +296,9 @@ class Dubber:
             "model": "MuseTalk 1.5",
             "native_fps": fps,
             "frames": count,
-            "face_detections": len(good),
+            "face_frames": len(mesh),
+            "pipeline": self.cache_version,
+            "rest_reference_frames": int((references >= 0).sum()),
             "audio_start": at,
             "source_start": start,
             "voice_delay_ms": voice_delay_ms,

@@ -73,16 +73,33 @@ def verified_master(recipe_path):
 
 def talking_take(folder, key):
     path = folder / (key + "-face.mp4")
-    check = read(folder / (key + "-sync.json"))
-    if (
-        not check.get("passed")
-        or check.get("video_sha256") != fingerprint(path)
-        or check.get("audio_sha256") != fingerprint(folder / (key + ".wav"))
-    ):
-        raise ValueError(
-            f"The selected speaking take has no matching lip-sync check: {key}"
-        )
-    return path, check
+    with FileLock(str(path) + ".lock"):
+        check = read(folder / (key + "-sync.json"))
+        signature = fingerprint(path)
+        if (
+            not check.get("passed")
+            or check.get("video_sha256") != signature
+            or check.get("audio_sha256") != fingerprint(folder / (key + ".wav"))
+        ):
+            raise ValueError(
+                f"The selected speaking take has no matching lip-sync check: {key}"
+            )
+        # Other editions can select a new reading while FFmpeg still opens shots.
+        # Bind the timeline to immutable bytes until the whole encode finishes.
+        versions = folder / ".takes"
+        versions.mkdir(exist_ok=True)
+        frozen = versions / (signature + ".mp4")
+        if not frozen.is_file():
+            with tempfile.TemporaryDirectory(dir=versions) as temp:
+                stage = Path(temp) / "take.mp4"
+                try:
+                    os.link(path, stage)
+                except OSError:
+                    shutil.copyfile(path, stage)
+                os.replace(stage, frozen)
+        if fingerprint(frozen) != signature:
+            raise ValueError(f"Staged take differs from its signed selection: {key}")
+    return frozen, check
 
 
 def selected_picture(folder, sha256):
@@ -256,21 +273,95 @@ def verify_edition(folder, detector, model_dir):
     digest = fingerprint(video)
     if digest != rec["sha256"] or assessment["sha256"] != digest:
         raise ValueError(f"The rendered edition changed: {video}")
+    from .campaign_cast import alternative_lines
+    from .campaign_face_integrity import assess as face_integrity
+    from .campaign_speech_controls import identify
+    from .campaign_speech_review import review
+
     shots = recipe["shots"]
-    review = {}
-    for role, start, seconds in [
-        ("opening", 0.0, shots[0]["seconds"]),
-        ("closing", 30.0 - shots[-1]["seconds"], shots[-1]["seconds"]),
+    cue_by_key = {cue["asset"]: cue for cue in recipe["voice_cues"]}
+    speech = folder.parent / "speech"
+    readings = speech / "creative-ready.json"
+    readings = read(readings)["readings"] if readings.is_file() else {}
+    catalog = read(folder.parent.parent / "experiments.json")
+    product = next(p for p in catalog["products"] if p["slug"] == rec["slug"])
+    timing, articulation, identity, integrity = {}, {}, {}, {}
+    for role, key, start, seconds in [
+        ("opening", f"hook{rec['hook'] - 1}", 0.0, shots[0]["seconds"]),
+        (
+            "closing",
+            f"cta{rec['cta'] - 1}",
+            30.0 - shots[-1]["seconds"],
+            shots[-1]["seconds"],
+        ),
     ]:
-        review[role] = measure(
-            video, folder / "voice.wav", detector, model_dir, start, seconds, start
+        presenter = product["presenter"][role]
+        source = (folder.parent.parent / presenter["file"]).resolve()
+        if fingerprint(source) != assessment["lip_sync"][role]["source_sha256"]:
+            raise ValueError(f"Reference face changed since rendering: {source}")
+        integrity[role] = face_integrity(
+            source,
+            video,
+            start=presenter.get("start", 0.0),
+            video_start=start,
+            seconds=seconds,
+        )
+        voice = folder / recipe["voice"]
+        timing[role] = measure(video, voice, detector, model_dir, start, seconds, start)
+        cue = cue_by_key[key]
+        transcript = readings.get(key, {}).get("spoken", cue["text"])
+        native = speech / (key + "-sync.json")
+        record = read(native) if native.is_file() else {}
+        anchors = None
+        native_anchors = speech / (key + "-anchors.json")
+        if native_anchors.is_file() and record.get("voice_onset") is not None:
+            saved = read(native_anchors)
+            bed = speech / (key + "-fixed-bed.wav")
+            # Reuse stamps only when both the actual source recording and its
+            # position in the rendered dialogue timeline match the measured bed.
+            if (
+                bed.is_file()
+                and fingerprint(bed)
+                == saved.get("bed_sha256")
+                == record.get("bed_sha256")
+                and fingerprint(speech / (key + ".wav")) == record.get("audio_sha256")
+                and abs(start + record["voice_onset"] - cue["start"]) < 0.001
+            ):
+                anchors = saved["anchors"]
+        articulation[role] = review(
+            video,
+            voice,
+            start=start,
+            seconds=seconds,
+            audio_start=start,
+            transcript=transcript,
+            anchors=anchors,
+        )
+        foils = alternative_lines(speech, key)
+        identity[role] = identify(
+            video,
+            voice,
+            foils,
+            detector,
+            model_dir,
+            start=start,
+            seconds=seconds,
+            audio_start=start,
         )
     check = {
-        "passed": all(s["passed"] for s in review.values())
+        "version": 2,
+        "passed": all(
+            result["passed"]
+            for group in (timing, articulation, identity, integrity)
+            for result in group.values()
+        )
         and assessment["audio"]["voice_alignment"]["passed"],
         "sha256": digest,
-        "measurement": "Final picture against the narration stem with separate stereo AAC alignment",
-        "assessment": review,
+        "measurement": "Final decoded picture, actual dialogue timeline and separately verified AAC mix. Includes vowel and consonant shapes, silent movement and a different utterance by the same presenter.",
+        "assessment": timing,
+        "articulation": articulation,
+        "spoken_identity": identity,
+        "face_integrity": integrity,
     }
     save(folder / "final-lips.json", check)
     save(video.parent / "lip-sync.json", check)
@@ -301,7 +392,24 @@ def verified_print(work, video_sha256):
     return True
 
 
+def current_takes(work, hook, cta):
+    report = work / "motion-assessment.json"
+    rendered = read(report).get("lip_sync", {}) if report.is_file() else {}
+    for role, key in (("opening", f"hook{hook}"), ("closing", f"cta{cta}")):
+        decision = work.parent / "speech" / (key + "-sync.json")
+        selected = read(decision) if decision.is_file() else {}
+        if (
+            not selected.get("passed")
+            or not selected.get("video_sha256")
+            or selected["video_sha256"] != rendered.get(role, {}).get("video_sha256")
+        ):
+            return False
+    return True
+
+
 def export(root, catalog, destination, *, ready_only=False):
+    from .campaign_face_integrity import FACE_INTEGRITY_VERSION
+
     entries = []
     pairs = {}
     for product, h, c in matrix(catalog["products"]):
@@ -309,6 +417,10 @@ def export(root, catalog, destination, *, ready_only=False):
         if ready_only and not (work / "delivery.json").is_file():
             continue
         rec = read(work / "delivery.json")
+        if product.get("presenter") and not current_takes(work, h, c):
+            if ready_only:
+                continue
+            raise ValueError(f"Superseded or missing presenter selection: {work}")
         if not verified_print(work, rec["sha256"]):
             if ready_only:
                 continue
@@ -342,7 +454,22 @@ def export(root, catalog, destination, *, ready_only=False):
             if ready_only and not (work / "final-lips.json").is_file():
                 continue
             sync = read(work / "final-lips.json")
-            if not sync["passed"] or sync["sha256"] != rec["sha256"]:
+            valid = (
+                sync.get("version") == 2
+                and sync.get("passed")
+                and sync.get("sha256") == rec["sha256"]
+                and all(
+                    sync.get("face_integrity", {}).get(role, {}).get("version")
+                    == FACE_INTEGRITY_VERSION
+                    for role in ("opening", "closing")
+                )
+                and all(
+                    sync.get(group, {}).get(role, {}).get("passed") is True
+                    for group in ("articulation", "spoken_identity", "face_integrity")
+                    for role in ("opening", "closing")
+                )
+            )
+            if not valid:
                 if ready_only:
                     continue
                 raise ValueError(f"Final audiovisual verification missing: {src}")
