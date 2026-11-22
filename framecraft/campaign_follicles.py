@@ -28,7 +28,7 @@ def _smoothstep(x):
     return x * x * (3 - 2 * x)
 
 
-def preserve_detail(base, face, original, unedited):
+def preserve_detail(base, face, original, unedited, *, measured_weight=None):
     """Map the original skin detail to its anatomical strip between nose and lip."""
     middle, axes, eye, points = _coordinates(face)
     anchor, raw_axes, raw_eye, raw_points = _coordinates(unedited)
@@ -60,7 +60,8 @@ def preserve_detail(base, face, original, unedited):
 
     lower, top = edges(points, u)
     source_lower, source_top = edges(raw_points, u)
-    weight = _smoothstep((lower - v) / 0.028) * _smoothstep((v - top + 0.037) / 0.052)
+    taper = 0.016 if measured_weight is not None else 0.028
+    weight = _smoothstep((lower - v) / taper) * _smoothstep((v - top + 0.037) / 0.052)
     weight *= _smoothstep((0.40 - abs(u)) / 0.080)
     if np.count_nonzero(weight > 0.20) < 30:
         return base
@@ -87,9 +88,15 @@ def preserve_detail(base, face, original, unedited):
     # keep that performance. Low-frequency illumination comes from the edit.
     energy = float(np.mean(np.abs(raw_detail[relevant])))
     existing = float(np.mean(np.abs(base_detail[relevant])))
-    if energy < 2.0 or existing > energy * 0.91:
+    if energy < 2.0 or (measured_weight is None and existing > energy * 0.91):
         return base
     fade = np.clip((1 - existing / max(1, energy)) / 0.32, 0, 1)
+    if measured_weight is not None:
+        # The independent encoded result already showed missing source fibres at
+        # this time. Offset mild subpixel resampling blur using the source's own
+        # high band. Other frames and the moving vermilion are still untouched.
+        fade = measured_weight
+        raw_detail += 0.55 * (raw - cv2.GaussianBlur(raw, (0, 0), 0.85))
     change = raw_detail - base_detail + np.clip(low_raw - low_edit, -12, 7) * 0.48
     fixed = base.copy()
     fixed[y:b, x:r] = np.clip(
@@ -98,7 +105,7 @@ def preserve_detail(base, face, original, unedited):
     return fixed
 
 
-def restore(source, video, output, *, source_start):
+def restore(source, video, output, *, source_start, failure_times=None):
     """Read each corresponding unmodified camera frame and retain its skin detail."""
     source = Path(source)
     if not np.isfinite(source_start) or source_start < 0:
@@ -128,12 +135,29 @@ def restore(source, video, output, *, source_start):
         raise ValueError("Could not decode the required segment of the unedited source")
     raw_mesh = track(source, first / source_fps, len(original))
     ix = np.minimum(ix, len(original) - 1)
+    weights = None
+    if failure_times is not None:
+        marks = np.asarray(failure_times, dtype=float)
+        if marks.ndim != 1 or not len(marks) or not np.isfinite(marks).all():
+            raise ValueError("Measured upper-lip failure times are required")
+        times = np.arange(len(base)) / fps
+        distance = np.min(abs(times[:, None] - marks), axis=1)
+        weights = _smoothstep(1 - np.maximum(0, distance - 0.035) / 0.055)
     changed = 0
 
     def frames():
         nonlocal changed
         for i, j in enumerate(ix):
-            frame = preserve_detail(base[i], mesh[i], original[j], raw_mesh[j])
+            if weights is not None and weights[i] == 0:
+                yield base[i]
+                continue
+            frame = preserve_detail(
+                base[i],
+                mesh[i],
+                original[j],
+                raw_mesh[j],
+                measured_weight=None if weights is None else weights[i],
+            )
             changed += frame is not base[i]
             yield frame
 
@@ -141,7 +165,9 @@ def restore(source, video, output, *, source_start):
     _encode(output, fps, (w, h), frames())
     return {
         "model": "matched original upper-lip skin detail",
-        "pipeline": "source-follicle-detail-v1",
+        "pipeline": "source-follicle-detail-v1"
+        if weights is None
+        else "local-source-follicle-detail-v1",
         "frames": len(base),
         "fps": fps,
         "restored_frames": int(changed),

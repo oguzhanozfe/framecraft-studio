@@ -30,3 +30,47 @@ def test_original_hairs_return_without_replacing_speaking_lips():
     error = lambda a: np.mean(cv2.absdiff(a[band], actual[band]))
     assert error(restored) < error(base) * 0.70
     assert preserve_detail(actual, landmarks, actual, landmarks) is actual
+
+
+def test_measured_second_pass_leaves_frames_outside_failure_window(
+    monkeypatch, tmp_path
+):
+    from framecraft import campaign_follicles as engine
+
+    scene = [np.full((40, 40, 3), n, dtype=np.uint8) for n in range(24)]
+    mesh = np.zeros((24, 478, 2), np.float32)
+
+    class Capture:
+        def get(self, prop):
+            return 24 if prop == cv2.CAP_PROP_FPS else len(scene)
+
+        def set(self, *args):
+            return True
+
+        def read(self):
+            return True, scene[0]
+
+        def release(self):
+            pass
+
+    drawn = []
+    monkeypatch.setattr(engine, "_take", lambda _: (scene, mesh, 24))
+    monkeypatch.setattr(engine.cv2, "VideoCapture", lambda _: Capture())
+    monkeypatch.setattr(engine, "track", lambda *args: mesh)
+    monkeypatch.setattr(
+        engine, "preserve_detail", lambda base, *args, measured_weight=None: base.copy()
+    )
+    monkeypatch.setattr(
+        engine, "_encode", lambda _, fps, size, frames: drawn.extend(list(frames))
+    )
+    result = engine.restore(
+        tmp_path / "original",
+        tmp_path / "take",
+        tmp_path / "out",
+        source_start=0,
+        failure_times=[0.5],
+    )
+    assert 1 < result["restored_frames"] < 7
+    assert drawn[0] is scene[0]
+    assert drawn[12] is not scene[12]
+    assert drawn[-1] is scene[-1]

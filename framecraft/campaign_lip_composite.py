@@ -175,7 +175,10 @@ def composite(source, candidate, source_face, candidate_face, lip_shading=0.0):
             lineType=cv2.LINE_AA,
             shift=4,
         )
-        weight = (outer.astype(np.float32) / 255 * lip_shading)[:, :, None]
+        # Saturated or pale cavity lighting must not leak onto closed vermilion.
+        # Fade borrowed low-frequency tone in as the actual mouth reopens.
+        openness = np.clip((separation / eye - 0.018) / 0.045, 0, 1)
+        weight = (outer.astype(np.float32) / 255 * lip_shading * openness)[:, :, None]
         sigma = max(1.2, eye * 0.023)
         shading = cv2.GaussianBlur(
             oral.astype(np.float32), (0, 0), sigma

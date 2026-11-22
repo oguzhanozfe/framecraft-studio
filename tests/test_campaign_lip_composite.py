@@ -59,3 +59,12 @@ def test_alignment_rejects_different_upper_face():
     other[33, 1] += 29
     with pytest.raises(ValueError, match="match"):
         alignment(source, other)
+
+
+def test_closed_lips_cannot_borrow_pale_generator_tone():
+    source = np.full((70, 84, 3), (50, 75, 160), np.uint8)
+    generated = np.full_like(source, (235, 240, 240))
+    original, sealed = mesh(3.5), mesh(0.04)
+    native = composite(source, generated, original, sealed)
+    shaded = composite(source, generated, original, sealed, lip_shading=1.0)
+    np.testing.assert_array_equal(shaded, native)
