@@ -273,6 +273,13 @@ def edition(root, product, hook, cta):
 
 
 def verify_edition(folder, detector, model_dir):
+    # Keep recipe, narration, native selections recorded in this edit, and the
+    # archived picture on the same generation while the decoded QA runs.
+    with FileLock(str(folder / ".lock")):
+        return _verify_edition(folder, detector, model_dir)
+
+
+def _verify_edition(folder, detector, model_dir):
     from .campaign_sync import measure
 
     rec = read(folder / "delivery.json")
@@ -371,6 +378,10 @@ def verify_edition(folder, detector, model_dir):
         "articulation": articulation,
         "spoken_identity": identity,
         "face_integrity": integrity,
+        "source_takes": {
+            role: assessment["lip_sync"][role]["video_sha256"]
+            for role in ("opening", "closing")
+        },
     }
     save(folder / "final-lips.json", check)
     save(video.parent / "lip-sync.json", check)
