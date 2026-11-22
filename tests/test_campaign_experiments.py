@@ -438,7 +438,7 @@ def test_original_lip_texture_is_rechecked_against_real_speech(
         )
     else:
         with pytest.raises(
-            ValueError, match="changed the recorded articulation or timing"
+            ValueError, match="preserve the recorded articulation or timing"
         ):
             checked_picture(*args)
     assert compared == ["performance.mp4", "original-lip-texture.mp4"]

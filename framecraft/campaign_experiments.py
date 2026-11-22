@@ -198,15 +198,24 @@ def edition(root, product, hook, cta):
         delivery = out / "delivery.json"
         if delivery.is_file():
             old = read(delivery)
+            assessment_path = out / "motion-assessment.json"
+            persisted = read(assessment_path) if assessment_path.is_file() else {}
             if (
                 old.get("signature") == sig
+                and persisted.get("sha256") == old.get("sha256")
+                and all(
+                    persisted.get("lip_sync", {}).get(role, {}).get("video_sha256")
+                    == native["video_sha256"]
+                    for role, native in (("opening", first), ("closing", last))
+                )
                 and Path(old["archive"]).is_file()
                 and fingerprint(Path(old["archive"])) == old["sha256"]
             ):
                 return old
         cues = assemble_voice(speech, events, out / "voice.wav")
         recipe = {
-            "output": "master.mp4",
+            # Windows readers can hold old encodes open during the next iteration.
+            "output": f"master-{sig[:20]}.mp4",
             "silent": False,
             "audio_mode": "voice_music",
             "voice": "voice.wav",

@@ -129,6 +129,50 @@ def adopt_candidate(source, speech, key, candidate, report, bed, detector, syncn
     return checks
 
 
+def texture_repairs(source, video, start, seconds, shape, skin, donor, receipt):
+    """Try the smallest same-actor repair before reconstructing the entire lip surface."""
+    defects = skin.get("lip_texture", {}).get("defects", {})
+    if defects.get("upper_lip_texture_erased"):
+        from .campaign_follicles import restore
+
+        detail = video.with_name("restored-facial-hair.mp4")
+        restore(source, video, detail, source_start=start)
+        yield detail
+    if (
+        donor
+        and receipt
+        and donor.is_file()
+        and donor.with_suffix(".json").is_file()
+        and shape.get("acoustic_tokens")
+        and any(
+            defects.get(kind) for kind in ("pale_contraction", "foreign_dark_patch")
+        )
+    ):
+        from .campaign_viseme_firm import repair_from_report
+
+        localized = video.with_name("localized-lip-texture.mp4")
+        try:
+            repair_from_report(
+                video,
+                donor,
+                shape["acoustic_tokens"],
+                skin,
+                localized,
+                video_receipt={**receipt, "video_sha256": digest(video)},
+                donor_receipt=read(donor.with_suffix(".json")),
+            )
+        except ValueError:
+            # An earlier audition can have a different actor, onset or duration.
+            pass
+        else:
+            yield localized
+    from .campaign_lip_composite import render
+
+    corrected = video.with_name("original-lip-texture.mp4")
+    render(source, video, corrected, source_start=start, seconds=seconds)
+    yield corrected
+
+
 def checked_picture(
     source,
     video,
@@ -168,59 +212,21 @@ def checked_picture(
         raise ValueError(f"Unverified mouth shapes: {shape['failures']}")
     skin = assess(source, video, start=start, seconds=seconds)
     if not skin["passed"]:
-        from .campaign_lip_composite import render as restore
-
-        if (
-            donor
-            and receipt
-            and donor.is_file()
-            and donor.with_suffix(".json").is_file()
-            and shape.get("acoustic_tokens")
+        for corrected in texture_repairs(
+            source, video, start, seconds, shape, skin, donor, receipt
         ):
-            from .campaign_viseme_firm import repair_from_report
-
-            localized = video.with_name("localized-lip-texture.mp4")
-            bound = {**receipt, "video_sha256": digest(video)}
-            try:
-                repair_from_report(
-                    video,
-                    donor,
-                    shape["acoustic_tokens"],
-                    skin,
-                    localized,
-                    video_receipt=bound,
-                    donor_receipt=read(donor.with_suffix(".json")),
-                )
-            except ValueError:
-                # An earlier audition can have a different actor, onset or duration.
-                pass
-            else:
-                candidate_skin = assess(source, localized, start=start, seconds=seconds)
-                candidate_shape = review(
-                    localized, bed, seconds=seconds, transcript=transcript
-                )
-                candidate_timing = measure(
-                    localized, bed, detector, syncnet, seconds=seconds
-                )
-                if all(
-                    c["passed"]
-                    for c in (candidate_skin, candidate_shape, candidate_timing)
-                ):
-                    return localized, candidate_shape, candidate_timing, candidate_skin
-        corrected = video.with_name("original-lip-texture.mp4")
-        restore(source, video, corrected, source_start=start, seconds=seconds)
-        skin = assess(source, corrected, start=start, seconds=seconds)
-        if not skin["passed"]:
-            raise ValueError(
-                f"Unresolved facial texture or contour errors: {skin['failure_times']}"
+            checked_skin = assess(source, corrected, start=start, seconds=seconds)
+            if not checked_skin["passed"]:
+                continue
+            checked_shape = review(
+                corrected, bed, seconds=seconds, transcript=transcript
             )
-        shape = review(corrected, bed, seconds=seconds, transcript=transcript)
-        timing = measure(corrected, bed, detector, syncnet, seconds=seconds)
-        if not (shape["passed"] and timing["passed"]):
-            raise ValueError(
-                "Source-texture repair changed the recorded articulation or timing"
-            )
-        video = corrected
+            checked_timing = measure(corrected, bed, detector, syncnet, seconds=seconds)
+            if checked_shape["passed"] and checked_timing["passed"]:
+                return corrected, checked_shape, checked_timing, checked_skin
+        raise ValueError(
+            "Source-texture repair could not preserve the recorded articulation or timing and surface"
+        )
     return video, shape, timing, skin
 
 

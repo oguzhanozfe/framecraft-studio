@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import tempfile
@@ -190,6 +191,13 @@ def render(source, candidate, output, *, source_start, seconds, lip_shading=0.0)
     """Use synchronized picture timestamps and retain exactly the native candidate frame count."""
     if not 0 <= lip_shading <= 1:
         raise ValueError("Lip shading proportion must be between zero and one")
+    if (
+        not math.isfinite(source_start)
+        or not math.isfinite(seconds)
+        or source_start < 0
+        or seconds <= 0
+    ):
+        raise ValueError("Use a finite source interval with a positive duration")
     paths = [Path(p).resolve() for p in (source, candidate, output)]
     source, candidate, output = paths
     if len(set(paths)) != 3:
@@ -286,6 +294,17 @@ def render(source, candidate, output, *, source_start, seconds, lip_shading=0.0)
                     proc.stdin.close()
             if source_hash != digest(source) or candidate_hash != digest(candidate):
                 raise ValueError("Input changed during rendering")
+            encoded = cv2.VideoCapture(str(target))
+            try:
+                if (
+                    int(encoded.get(cv2.CAP_PROP_FRAME_COUNT)) != count
+                    or abs(encoded.get(cv2.CAP_PROP_FPS) - fps) > 0.001
+                ):
+                    raise ValueError(
+                        "Encoded lip repair changed the native frame clock"
+                    )
+            finally:
+                encoded.release()
             proof = {
                 "pipeline": "source-vermilion-v1",
                 "lip_shading": lip_shading,
