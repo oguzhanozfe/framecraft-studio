@@ -1,0 +1,43 @@
+{
+  "source": "Original geometric puzzle, synthetic offline fixture.",
+  "brief": {
+    "motion_by_ms": 500,
+    "goal_by_ms": 1000,
+    "hold_goal_ms": 300
+  },
+  "cuts": {
+    "move-first": {
+      "decision": "meets_brief",
+      "first_motion_ms": 200,
+      "first_goal_ms": 700,
+      "final_goal_hold_ms": 1500,
+      "duration_ms": 2200,
+      "checks": {
+        "single_marker_visible": true,
+        "starts_at_source": true,
+        "passes_turn_before_goal": true,
+        "motion_in_time": true,
+        "goal_in_time": true,
+        "holds_final_goal": true
+      },
+      "final_frame_rgb_sha256": "dc89d91cd68212d5629a5cdc1505eded57e2bce1125563b831f6d8ce634f3bdc"
+    },
+    "setup-first": {
+      "decision": "revise",
+      "first_motion_ms": 1100,
+      "first_goal_ms": 1600,
+      "final_goal_hold_ms": 600,
+      "duration_ms": 2200,
+      "checks": {
+        "single_marker_visible": true,
+        "starts_at_source": true,
+        "passes_turn_before_goal": true,
+        "motion_in_time": false,
+        "goal_in_time": false,
+        "holds_final_goal": true
+      },
+      "final_frame_rgb_sha256": "dc89d91cd68212d5629a5cdc1505eded57e2bce1125563b831f6d8ce634f3bdc"
+    }
+  },
+  "same_final_frame": true
+}

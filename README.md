@@ -6,6 +6,23 @@ A local video creator for product-aware, audience-specific UGC. Its director con
 
 [Getting started](docs/getting-started.md) · [Turkish guide](docs/baslangic.md) · [Research and evaluation](docs/research.md) · [RTX 3090 example](docs/rtx-3090-evaluation.md)
 
+## Two openings for one puzzle
+
+An amber tile follows the same L-shaped corridor in two 2.2-second edits. The creative brief calls for movement within 500 ms, the tile in the socket within 1,000 ms, and a final hold of at least 300 ms. The board, route, running time and final frame are the same in both cuts. All artwork is original and drawn locally.
+
+| Action first | Setup first |
+| --- | --- |
+| ![The amber tile starts moving after 200 ms](docs/puzzle-openings/move-first.gif) | ![The same tile waits 1.1 seconds before it starts moving](docs/puzzle-openings/setup-first.gif) |
+| Meets the brief. Motion at 200 ms, socket reached at 700 ms. | Revise the opening hold. Motion at 1,100 ms, socket reached at 1,600 ms. |
+
+The reviewer reopens each GIF, tracks the amber tile through the corner, and reads timing from the decoded frames. The decision measures this specific brief. Campaign performance would require audience data. [Recorded checks for both cuts](docs/puzzle-openings/comparison.json)
+
+Reproduce the GIFs and evidence locally with Python and Pillow:
+
+```sh
+python -m framecraft.puzzle_openings /tmp/puzzle-openings
+```
+
 ## Start the studio
 
 Install Python 3.11+ and FFmpeg with H.264 support. Windows users can double-click `Start-UGC-Creator.cmd` after cloning. On Linux install DejaVu Sans and a working system keyring to store account tokens, or supply credentials through environment variables.
